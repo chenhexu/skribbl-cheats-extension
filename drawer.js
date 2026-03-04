@@ -58,7 +58,7 @@
     const canvas = document.createElement('canvas');
     canvas.width = CANVAS_W;
     canvas.height = CANVAS_H;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
@@ -72,7 +72,7 @@
   }
 
   function removeBackground(canvas, threshold) {
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const d = imgData.data;
     const t = threshold * threshold * 3;
@@ -87,7 +87,7 @@
   }
 
   function sampleToPoints(canvas, step) {
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const d = imgData.data;
     const w = canvas.width;
@@ -204,6 +204,7 @@
   }
 
   function dispatchCanvasEvent(canvasEl, type, gameX, gameY) {
+    if (!canvasEl) return;
     const rect = canvasEl.getBoundingClientRect();
     const scaleX = rect.width / CANVAS_W;
     const scaleY = rect.height / CANVAS_H;
@@ -224,9 +225,11 @@
   }
 
   function drawDotOnCanvas(canvasEl, x, y) {
+    if (!canvasEl || !canvasEl.isConnected) return false;
     dispatchCanvasEvent(canvasEl, 'mousedown', x, y);
     dispatchCanvasEvent(canvasEl, 'mousemove', x, y);
     dispatchCanvasEvent(canvasEl, 'mouseup', x, y);
+    return true;
   }
 
   // ── Drawing orchestrator ────────────────────────────────────────────────
@@ -279,6 +282,11 @@
 
     function tick() {
       if (!drawState.running) return;
+      if (!canvasEl.isConnected) {
+        drawState.running = false;
+        if (drawState.onDone) drawState.onDone('Canvas disappeared (round ended?)');
+        return;
+      }
       const end = Math.min(drawState.index + chunkSize, points.length);
 
       for (let i = drawState.index; i < end; i++) {
@@ -287,7 +295,7 @@
           clickColor(p.colorId);
           currentColorId = p.colorId;
         }
-        drawDotOnCanvas(canvasEl, p.x, p.y);
+        if (!drawDotOnCanvas(canvasEl, p.x, p.y)) break;
       }
 
       drawState.index = end;
