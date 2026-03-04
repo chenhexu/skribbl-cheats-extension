@@ -7,6 +7,11 @@
   "content_scripts": [
     {
       "matches": ["https://skribbl.io/*"],
+      "js": ["socket-hook.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://skribbl.io/*"],
       "js": ["drawer.js", "content.js"],
       "run_at": "document_idle"
     }

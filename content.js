@@ -6497,6 +6497,10 @@
             chunkSize: chunk,
             chunkDelayMs: delay,
             brushSize,
+            onMethod: (method) => {
+              drawerStats.textContent = `Drawing via ${method === 'socket' ? 'socket (fast)' : 'mouse fallback'}...`;
+              devLog('info', `Drawer: using method=${method}`);
+            },
             onProgress: (idx, total) => {
               const pct = Math.round((idx / total) * 100);
               drawerBar.style.width = pct + '%';

@@ -36,7 +36,7 @@
 
   const PALETTE_NO_WHITE = PALETTE.filter(c => c.id !== 0);
 
-  // ── Color distance (Euclidean in RGB) ───────────────────────────────────
+  // ── Color distance ───────────────────────────────────────────────────────
   function colorDistSq(r1, g1, b1, r2, g2, b2) {
     const dr = r1 - r2, dg = g1 - g2, db = b1 - b2;
     return dr * dr + dg * dg + db * db;
@@ -61,13 +61,9 @@
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-
     const scale = Math.min(CANVAS_W / img.width, CANVAS_H / img.height);
-    const w = img.width * scale;
-    const h = img.height * scale;
-    const x = (CANVAS_W - w) / 2;
-    const y = (CANVAS_H - h) / 2;
-    ctx.drawImage(img, x, y, w, h);
+    const w = img.width * scale, h = img.height * scale;
+    ctx.drawImage(img, (CANVAS_W - w) / 2, (CANVAS_H - h) / 2, w, h);
     return canvas;
   }
 
@@ -78,9 +74,7 @@
     const t = threshold * threshold * 3;
     for (let i = 0; i < d.length; i += 4) {
       const dr = 255 - d[i], dg = 255 - d[i + 1], db = 255 - d[i + 2];
-      if (dr * dr + dg * dg + db * db < t) {
-        d[i + 3] = 0;
-      }
+      if (dr * dr + dg * dg + db * db < t) d[i + 3] = 0;
     }
     ctx.putImageData(imgData, 0, 0);
     return canvas;
@@ -89,16 +83,13 @@
   function sampleToPoints(canvas, step) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const d = imgData.data;
-    const w = canvas.width;
+    const d = imgData.data, w = canvas.width;
     const points = [];
     for (let y = 0; y < canvas.height; y += step) {
       for (let x = 0; x < w; x += step) {
         const i = (y * w + x) * 4;
         if (d[i + 3] < 128) continue;
-        const r = d[i], g = d[i + 1], b = d[i + 2];
-        const cid = nearestColorId(r, g, b, true);
-        points.push({ x, y, colorId: cid });
+        points.push({ x, y, colorId: nearestColorId(d[i], d[i + 1], d[i + 2], true) });
       }
     }
     return points;
@@ -108,61 +99,67 @@
     if (points.length <= maxPoints) return points;
     const step = points.length / maxPoints;
     const out = [];
-    for (let i = 0; i < maxPoints; i++) {
-      out.push(points[Math.floor(i * step)]);
-    }
+    for (let i = 0; i < maxPoints; i++) out.push(points[Math.floor(i * step)]);
     return out;
-  }
-
-  function sortByColor(points) {
-    return points.slice().sort((a, b) => a.colorId - b.colorId);
   }
 
   function processImage(img, options) {
     const { bgThreshold, density, maxPoints } = options;
     const step = Math.max(1, Math.round(11 - density));
-
     let canvas = resizeImageToCanvas(img);
-    if (bgThreshold > 0) {
-      canvas = removeBackground(canvas, bgThreshold);
-    }
+    if (bgThreshold > 0) canvas = removeBackground(canvas, bgThreshold);
     let points = sampleToPoints(canvas, step);
-    points = sortByColor(points);
-    if (maxPoints > 0 && points.length > maxPoints) {
-      points = downsamplePoints(points, maxPoints);
-    }
+    // Sort by color to minimise color-switch overhead
+    points.sort((a, b) => a.colorId - b.colorId);
+    if (maxPoints > 0 && points.length > maxPoints) points = downsamplePoints(points, maxPoints);
     return { canvas, points };
   }
 
-  // ── Drawing: mouse simulation on the game canvas ────────────────────────
-  // This is the primary drawing method. We find the game's <canvas> element
-  // and dispatch mouse events that skribbl.io's client-side JS processes to
-  // generate draw commands and send them to the server on our behalf.
+  // ── Drawing: socket bridge (via page-context script injected by socket-hook.js)
+  // We communicate via CustomEvent because content scripts and page scripts
+  // have isolated JS worlds but share the same DOM/event system.
+
+  function checkSocketReady(cb) {
+    const handler = (e) => {
+      window.removeEventListener('__sagSocketReady', handler);
+      cb(e.detail);
+    };
+    window.addEventListener('__sagSocketReady', handler);
+    window.dispatchEvent(new CustomEvent('__sagSocketCheck'));
+    // Timeout in case the hook script didn't load
+    setTimeout(() => {
+      window.removeEventListener('__sagSocketReady', handler);
+      cb(false);
+    }, 200);
+  }
+
+  function sendViaSocket(commands) {
+    // Draw commands format (Socket.io type 4 = message + event):
+    // 42["drawCommands",[[0,colorId,brushSize,x1,y1,x2,y2],...]]
+    const payload = '42["drawCommands",' + JSON.stringify(commands) + ']';
+    window.dispatchEvent(new CustomEvent('__sagDraw', { detail: payload }));
+  }
+
+  // ── Drawing: mouse simulation fallback ──────────────────────────────────
+  // Used only if socket is not available.
 
   function findGameCanvas() {
-    // Skribbl uses a single large canvas inside #containerBoard
     const all = document.querySelectorAll('canvas');
     for (const c of all) {
-      // Pick the largest canvas (the drawing board)
       if (c.width >= 300 && c.height >= 200) return c;
     }
     return all[0] || null;
   }
 
   function findColorElements() {
-    // Skribbl color buttons live inside .containerColorbox as child divs
-    // with inline background-color styles. Fall back to broad search.
     const box = document.querySelector('.containerColorbox') ||
-                document.querySelector('[class*="colorbox"]') ||
-                document.querySelector('[class*="color-box"]');
+                document.querySelector('[class*="colorbox"]');
     if (box) {
-      const divs = Array.from(box.querySelectorAll('div'));
-      return divs.filter(d => {
+      return Array.from(box.querySelectorAll('div')).filter(d => {
         const bg = d.style.backgroundColor || '';
         return bg.startsWith('rgb');
       });
     }
-    // Broad fallback: find small divs with solid background colors
     const candidates = document.querySelectorAll('div[style*="background"]');
     const result = [];
     for (const d of candidates) {
@@ -175,80 +172,50 @@
     return result;
   }
 
-  function findBrushSizeElements() {
-    const box = document.querySelector('.containerBrushSizes') ||
-                document.querySelector('[class*="brush"]');
-    if (!box) return [];
-    return Array.from(box.querySelectorAll('div'));
-  }
-
   let lastClickedColorId = -1;
 
   function clickColor(colorId) {
-    if (colorId === lastClickedColorId) return true;
+    if (colorId === lastClickedColorId) return;
     const target = PALETTE[colorId];
-    if (!target) return false;
-    const buttons = findColorElements();
-    for (const btn of buttons) {
+    if (!target) return;
+    for (const btn of findColorElements()) {
       const bg = btn.style.backgroundColor || getComputedStyle(btn).backgroundColor;
       const m = bg.match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/);
       if (!m) continue;
-      const r = parseInt(m[1]), g = parseInt(m[2]), b = parseInt(m[3]);
-      if (colorDistSq(r, g, b, target.r, target.g, target.b) < 400) {
+      if (colorDistSq(+m[1], +m[2], +m[3], target.r, target.g, target.b) < 400) {
         btn.click();
         lastClickedColorId = colorId;
-        return true;
+        return;
       }
     }
-    return false;
   }
 
-  function dispatchCanvasEvent(canvasEl, type, gameX, gameY) {
-    if (!canvasEl) return;
-    const rect = canvasEl.getBoundingClientRect();
-    const scaleX = rect.width / CANVAS_W;
-    const scaleY = rect.height / CANVAS_H;
-    const clientX = rect.left + gameX * scaleX;
-    const clientY = rect.top + gameY * scaleY;
-    const offsetX = gameX * scaleX;
-    const offsetY = gameY * scaleY;
-    canvasEl.dispatchEvent(new MouseEvent(type, {
-      bubbles: true,
-      cancelable: true,
-      clientX,
-      clientY,
-      offsetX,
-      offsetY,
-      button: 0,
-      buttons: type === 'mouseup' ? 0 : 1,
-    }));
-  }
-
-  function drawDotOnCanvas(canvasEl, x, y) {
+  function drawDotMouse(canvasEl, x, y) {
     if (!canvasEl || !canvasEl.isConnected) return false;
-    dispatchCanvasEvent(canvasEl, 'mousedown', x, y);
-    dispatchCanvasEvent(canvasEl, 'mousemove', x, y);
-    dispatchCanvasEvent(canvasEl, 'mouseup', x, y);
+    const rect = canvasEl.getBoundingClientRect();
+    const scaleX = rect.width / CANVAS_W, scaleY = rect.height / CANVAS_H;
+    const clientX = rect.left + x * scaleX, clientY = rect.top + y * scaleY;
+    const mk = (type, buttons) => new MouseEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons,
+      clientX, clientY, offsetX: x * scaleX, offsetY: y * scaleY,
+    });
+    canvasEl.dispatchEvent(mk('mousedown', 1));
+    canvasEl.dispatchEvent(mk('mousemove', 1));
+    canvasEl.dispatchEvent(mk('mouseup', 0));
     return true;
   }
 
   // ── Drawing orchestrator ────────────────────────────────────────────────
 
   let drawState = {
-    running: false,
-    points: [],
-    index: 0,
-    timer: null,
-    onProgress: null,
-    onDone: null,
+    running: false, points: [], index: 0,
+    timer: null, onProgress: null, onDone: null,
+    method: 'socket',
   };
 
   function stopDrawing() {
     drawState.running = false;
-    if (drawState.timer) {
-      clearTimeout(drawState.timer);
-      drawState.timer = null;
-    }
+    if (drawState.timer) { clearTimeout(drawState.timer); drawState.timer = null; }
   }
 
   function startDrawing(points, options) {
@@ -260,79 +227,92 @@
     drawState.onProgress = onProgress || null;
     drawState.onDone = onDone || null;
 
-    const canvasEl = findGameCanvas();
-    if (!canvasEl) {
-      drawState.running = false;
-      if (onDone) onDone('Game canvas not found');
-      return;
-    }
+    // Decide method: socket if available, mouse otherwise
+    checkSocketReady((socketOk) => {
+      drawState.method = socketOk ? 'socket' : 'mouse';
 
-    // Try to select the smallest brush size by clicking it
-    const brushBtns = findBrushSizeElements();
-    if (brushBtns.length > 0) {
-      // Brush buttons are ordered smallest to largest
-      const idx = brushSize <= 4 ? 0 : brushSize <= 10 ? 1 : brushSize <= 20 ? 2 : brushSize <= 32 ? 3 : 4;
-      if (brushBtns[Math.min(idx, brushBtns.length - 1)]) {
-        brushBtns[Math.min(idx, brushBtns.length - 1)].click();
-      }
-    }
-
-    let currentColorId = -1;
-    lastClickedColorId = -1;
-
-    function tick() {
-      if (!drawState.running) return;
-      if (!canvasEl.isConnected) {
+      const canvasEl = drawState.method === 'mouse' ? findGameCanvas() : null;
+      if (drawState.method === 'mouse' && !canvasEl) {
         drawState.running = false;
-        if (drawState.onDone) drawState.onDone('Canvas disappeared (round ended?)');
+        if (onDone) onDone('No socket and no canvas found');
         return;
       }
-      const end = Math.min(drawState.index + chunkSize, points.length);
 
-      for (let i = drawState.index; i < end; i++) {
-        const p = points[i];
-        if (p.colorId !== currentColorId) {
-          clickColor(p.colorId);
-          currentColorId = p.colorId;
+      if (drawState.method === 'mouse') {
+        // Pick smallest brush by clicking brush size buttons
+        const brushBtns = Array.from(
+          document.querySelectorAll('.containerBrushSizes div, [class*="brush"] div')
+        );
+        const idx = brushSize <= 4 ? 0 : brushSize <= 10 ? 1 : brushSize <= 20 ? 2 : brushSize <= 32 ? 3 : 4;
+        if (brushBtns[Math.min(idx, brushBtns.length - 1)]) {
+          brushBtns[Math.min(idx, brushBtns.length - 1)].click();
         }
-        if (!drawDotOnCanvas(canvasEl, p.x, p.y)) break;
+        lastClickedColorId = -1;
       }
 
-      drawState.index = end;
-      if (drawState.onProgress) {
-        drawState.onProgress(drawState.index, points.length);
+      // Callback so caller knows which method is being used
+      if (options.onMethod) options.onMethod(drawState.method);
+
+      let currentColorId = -1;
+
+      function tick() {
+        if (!drawState.running) return;
+        if (drawState.method === 'mouse' && canvasEl && !canvasEl.isConnected) {
+          drawState.running = false;
+          if (drawState.onDone) drawState.onDone('Canvas disappeared');
+          return;
+        }
+
+        const end = Math.min(drawState.index + chunkSize, points.length);
+
+        if (drawState.method === 'socket') {
+          const cmds = [];
+          for (let i = drawState.index; i < end; i++) {
+            const p = points[i];
+            cmds.push([0, p.colorId, brushSize,
+              Math.round(p.x), Math.round(p.y),
+              Math.round(p.x), Math.round(p.y)]);
+          }
+          if (cmds.length) sendViaSocket(cmds);
+        } else {
+          for (let i = drawState.index; i < end; i++) {
+            const p = points[i];
+            if (p.colorId !== currentColorId) {
+              clickColor(p.colorId);
+              currentColorId = p.colorId;
+            }
+            if (!drawDotMouse(canvasEl, p.x, p.y)) break;
+          }
+        }
+
+        drawState.index = end;
+        if (drawState.onProgress) drawState.onProgress(drawState.index, points.length);
+
+        if (drawState.index >= points.length) {
+          drawState.running = false;
+          if (drawState.onDone) drawState.onDone(null);
+          return;
+        }
+        drawState.timer = setTimeout(tick, chunkDelayMs);
       }
 
-      if (drawState.index >= points.length) {
-        drawState.running = false;
-        if (drawState.onDone) drawState.onDone(null);
-        return;
-      }
-
-      drawState.timer = setTimeout(tick, chunkDelayMs);
-    }
-
-    tick();
+      tick();
+    });
   }
 
   // ── Estimate drawing time ───────────────────────────────────────────────
 
   function estimateTime(pointCount, chunkSize, chunkDelayMs) {
-    const ticks = Math.ceil(pointCount / chunkSize);
-    return Math.round((ticks * chunkDelayMs) / 1000);
+    return Math.round((Math.ceil(pointCount / chunkSize) * chunkDelayMs) / 1000);
   }
 
-  // ── Expose to global for content.js integration ─────────────────────────
+  // ── Expose ───────────────────────────────────────────────────────────────
 
   window.__skribblDrawer = {
-    PALETTE,
-    CANVAS_W,
-    CANVAS_H,
-    processImage,
-    startDrawing,
-    stopDrawing,
-    estimateTime,
+    PALETTE, CANVAS_W, CANVAS_H,
+    processImage, startDrawing, stopDrawing, estimateTime,
     isDrawing: () => drawState.running,
     getProgress: () => ({ index: drawState.index, total: drawState.points.length }),
+    checkSocketReady,
   };
 })();
