@@ -109,51 +109,127 @@
     let canvas = resizeImageToCanvas(img);
     if (bgThreshold > 0) canvas = removeBackground(canvas, bgThreshold);
     let points = sampleToPoints(canvas, step);
-    // Sort by color to minimise color-switch overhead
     points.sort((a, b) => a.colorId - b.colorId);
     if (maxPoints > 0 && points.length > maxPoints) points = downsamplePoints(points, maxPoints);
     return { canvas, points };
   }
 
-  // ── Drawing: socket bridge (via page-context script injected by socket-hook.js)
-  // We communicate via CustomEvent because content scripts and page scripts
-  // have isolated JS worlds but share the same DOM/event system.
+  // ── Socket bridge (via page-context postMessage) ────────────────────────
 
   function checkSocketReady(cb) {
     const handler = (e) => {
-      window.removeEventListener('__sagSocketReady', handler);
-      cb(e.detail);
+      if (e.source !== window || !e.data || e.data._sag !== true || e.data.action !== 'socketReady') return;
+      window.removeEventListener('message', handler);
+      if (timeoutId) clearTimeout(timeoutId);
+      cb(!!e.data.ready);
     };
-    window.addEventListener('__sagSocketReady', handler);
-    window.dispatchEvent(new CustomEvent('__sagSocketCheck'));
-    // Timeout in case the hook script didn't load
-    setTimeout(() => {
-      window.removeEventListener('__sagSocketReady', handler);
+    window.addEventListener('message', handler);
+    window.postMessage({ _sag: true, action: 'socketCheck' }, '*');
+    var timeoutId = setTimeout(() => {
+      timeoutId = null;
+      window.removeEventListener('message', handler);
       cb(false);
-    }, 200);
+    }, 800);
   }
 
   function sendViaSocket(commands) {
-    // Draw commands format (Socket.io type 4 = message + event):
-    // 42["drawCommands",[[0,colorId,brushSize,x1,y1,x2,y2],...]]
     const payload = '42["drawCommands",' + JSON.stringify(commands) + ']';
-    window.dispatchEvent(new CustomEvent('__sagDraw', { detail: payload }));
+    window.postMessage({ _sag: true, action: 'draw', payload: payload }, '*');
   }
 
-  // ── Drawing: mouse simulation fallback ──────────────────────────────────
-  // Used only if socket is not available.
+  // ── Debugger bridge (via chrome.runtime.sendMessage to background) ──────
 
-  function findGameCanvas() {
+  function sendToBg(msg) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage(msg, (resp) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(resp || { ok: false, error: 'no response' });
+        }
+      });
+    });
+  }
+
+  async function debuggerAttach() {
+    return sendToBg({ action: 'debuggerAttach' });
+  }
+
+  async function debuggerDetach() {
+    return sendToBg({ action: 'debuggerDetach' });
+  }
+
+  async function debuggerDrawDot(viewportX, viewportY) {
+    return sendToBg({ action: 'drawDot', x: viewportX, y: viewportY });
+  }
+
+  async function debuggerDrawDots(points) {
+    return sendToBg({ action: 'drawDots', points: points });
+  }
+
+  async function debuggerClickAt(viewportX, viewportY) {
+    return sendToBg({ action: 'clickAt', x: viewportX, y: viewportY });
+  }
+
+  async function checkDebuggerReady() {
+    const resp = await debuggerAttach();
+    return resp && resp.ok === true;
+  }
+
+  // ── Canvas and color detection ──────────────────────────────────────────
+
+  function listAllCanvases() {
+    const out = [];
     const all = document.querySelectorAll('canvas');
-    for (const c of all) {
-      if (c.width >= 300 && c.height >= 200) return c;
+    all.forEach(function (c, i) {
+      const rect = c.getBoundingClientRect();
+      const style = window.getComputedStyle(c);
+      const visible = rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+      out.push({
+        index: i, width: c.width, height: c.height,
+        displayWidth: Math.round(rect.width), displayHeight: Math.round(rect.height),
+        top: Math.round(rect.top), left: Math.round(rect.left),
+        id: c.id || '(no id)',
+        className: (c.className && typeof c.className === 'string') ? c.className : '(none)',
+        visible: visible, el: c,
+      });
+    });
+    return out;
+  }
+
+  function findGameCanvas(logFn) {
+    const noop = function () {};
+    const log = typeof logFn === 'function' ? logFn : noop;
+    const all = listAllCanvases();
+    log('Canvas scan: found ' + all.length + ' canvas(es) on page');
+    all.forEach(function (info) {
+      log('  [' + info.index + '] ' + info.width + 'x' + info.height + ' display ' + info.displayWidth + 'x' + info.displayHeight + ' at (' + info.left + ',' + info.top + ') id=' + info.id + ' class=' + info.className.substring(0, 60) + (info.visible ? ' visible' : ' hidden'));
+    });
+
+    const bySize = all.filter(function (info) { return info.width >= 300 && info.height >= 200; });
+    if (bySize.length > 0) {
+      log('Canvas pick: chose index ' + bySize[0].index + ' by size (>=300x200)');
+      return bySize[0].el;
     }
-    return all[0] || null;
+
+    const selectors = [
+      'canvas[width="800"][height="600"]', 'canvas[height="600"]',
+      '.containerGame canvas', '.containerCanvas canvas', '#game canvas',
+      '[class*="canvas"] canvas', '[class*="draw"] canvas',
+    ];
+    for (var s = 0; s < selectors.length; s++) {
+      try {
+        const el = document.querySelector(selectors[s]);
+        if (el && el.tagName === 'CANVAS') { log('Canvas pick: chose by selector "' + selectors[s] + '"'); return el; }
+      } catch (e) {}
+    }
+
+    if (all.length > 0) { log('Canvas pick: falling back to first canvas (index 0)'); return all[0].el; }
+    log('Canvas pick: none'); return null;
   }
 
   function findColorElements() {
-    const box = document.querySelector('.containerColorbox') ||
-                document.querySelector('[class*="colorbox"]');
+    const box = document.querySelector('.containerColorbox') || document.querySelector('[class*="colorbox"]');
     if (box) {
       return Array.from(box.querySelectorAll('div')).filter(d => {
         const bg = d.style.backgroundColor || '';
@@ -172,37 +248,128 @@
     return result;
   }
 
+  function findBrushSizeElements() {
+    return Array.from(document.querySelectorAll('.containerBrushSizes div, [class*="brush"] div'));
+  }
+
+  // ── Viewport coordinate helpers ─────────────────────────────────────────
+  // CDP Input.dispatchMouseEvent uses viewport (layout viewport) coordinates.
+
+  function gameToViewport(canvasEl, gameX, gameY) {
+    const rect = canvasEl.getBoundingClientRect();
+    const scaleX = rect.width / CANVAS_W;
+    const scaleY = rect.height / CANVAS_H;
+    return {
+      x: Math.round(rect.left + gameX * scaleX),
+      y: Math.round(rect.top + gameY * scaleY),
+    };
+  }
+
+  function elementCenter(el) {
+    const r = el.getBoundingClientRect();
+    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+  }
+
+  // ── Color clicking via CDP ──────────────────────────────────────────────
+
   let lastClickedColorId = -1;
 
-  function clickColor(colorId) {
+  async function clickColorCDP(colorId, logFn) {
     if (colorId === lastClickedColorId) return;
     const target = PALETTE[colorId];
     if (!target) return;
-    for (const btn of findColorElements()) {
+    const colorEls = findColorElements();
+    for (const btn of colorEls) {
       const bg = btn.style.backgroundColor || getComputedStyle(btn).backgroundColor;
       const m = bg.match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/);
       if (!m) continue;
       if (colorDistSq(+m[1], +m[2], +m[3], target.r, target.g, target.b) < 400) {
-        btn.click();
+        const c = elementCenter(btn);
+        await debuggerClickAt(c.x, c.y);
         lastClickedColorId = colorId;
         return;
       }
     }
+    if (logFn) logFn('clickColorCDP: no match for colorId=' + colorId);
   }
 
-  function drawDotMouse(canvasEl, x, y) {
-    if (!canvasEl || !canvasEl.isConnected) return false;
+  async function clickBrushSizeCDP(brushSize, logFn) {
+    const btns = findBrushSizeElements();
+    const idx = brushSize <= 4 ? 0 : brushSize <= 10 ? 1 : brushSize <= 20 ? 2 : brushSize <= 32 ? 3 : 4;
+    const btn = btns[Math.min(idx, btns.length - 1)];
+    if (btn) {
+      const c = elementCenter(btn);
+      await debuggerClickAt(c.x, c.y);
+      if (logFn) logFn('clickBrushSizeCDP: clicked index=' + idx);
+    }
+  }
+
+  // ── Calibration ─────────────────────────────────────────────────────────
+
+  const CALIBRATION_BRUSH = 20;
+  const CALIBRATION_DOTS = [
+    { x: 80, y: 80, colorId: 1 },
+    { x: CANVAS_W - 80, y: 80, colorId: 4 },
+    { x: CANVAS_W - 80, y: CANVAS_H - 80, colorId: 10 },
+    { x: 80, y: CANVAS_H - 80, colorId: 14 },
+    { x: CANVAS_W / 2, y: CANVAS_H / 2, colorId: 16 },
+  ];
+
+  async function runCalibration(options) {
+    const log = options.log || function () {};
+    const onDone = options.onDone || function () {};
+
+    const canvasEl = findGameCanvas(log);
+    if (!canvasEl) {
+      log('Calibration: no canvas found.');
+      onDone('No canvas found');
+      return;
+    }
     const rect = canvasEl.getBoundingClientRect();
-    const scaleX = rect.width / CANVAS_W, scaleY = rect.height / CANVAS_H;
-    const clientX = rect.left + x * scaleX, clientY = rect.top + y * scaleY;
-    const mk = (type, buttons) => new MouseEvent(type, {
-      bubbles: true, cancelable: true, button: 0, buttons,
-      clientX, clientY, offsetX: x * scaleX, offsetY: y * scaleY,
+    log('Calibration: canvas ' + canvasEl.width + 'x' + canvasEl.height + ', display ' + Math.round(rect.width) + 'x' + Math.round(rect.height) + ' at (' + Math.round(rect.left) + ',' + Math.round(rect.top) + ')');
+
+    const colorEls = findColorElements();
+    log('Calibration: color buttons=' + colorEls.length);
+
+    // Try debugger first
+    log('Calibration: attempting debugger (CDP) path...');
+    const dbgOk = await checkDebuggerReady();
+    log('Calibration: debugger attach=' + dbgOk);
+
+    if (dbgOk) {
+      try {
+        await clickBrushSizeCDP(CALIBRATION_BRUSH, log);
+        for (let i = 0; i < CALIBRATION_DOTS.length; i++) {
+          const p = CALIBRATION_DOTS[i];
+          await clickColorCDP(p.colorId, log);
+          const vp = gameToViewport(canvasEl, p.x, p.y);
+          const resp = await debuggerDrawDot(vp.x, vp.y);
+          log('Calibration: CDP dot ' + (i + 1) + '/' + CALIBRATION_DOTS.length + ' at game(' + p.x + ',' + p.y + ') -> viewport(' + vp.x + ',' + vp.y + ') color=' + p.colorId + ' ok=' + (resp && resp.ok));
+        }
+        log('Calibration: 5 dots sent via CDP. Check canvas.');
+        onDone(null);
+      } catch (e) {
+        log('Calibration: CDP error: ' + e.message);
+        onDone('CDP error: ' + e.message);
+      }
+      return;
+    }
+
+    // Try socket
+    log('Calibration: debugger unavailable, trying socket...');
+    checkSocketReady((socketOk) => {
+      log('Calibration: socket ready=' + socketOk);
+      if (socketOk) {
+        const cmds = CALIBRATION_DOTS.map(p => [0, p.colorId, CALIBRATION_BRUSH, p.x, p.y, p.x, p.y]);
+        sendViaSocket(cmds);
+        log('Calibration: sent ' + cmds.length + ' dots via socket.');
+        onDone(null);
+        return;
+      }
+
+      log('Calibration: no debugger and no socket. Cannot draw.');
+      onDone('No debugger and no socket available');
     });
-    canvasEl.dispatchEvent(mk('mousedown', 1));
-    canvasEl.dispatchEvent(mk('mousemove', 1));
-    canvasEl.dispatchEvent(mk('mouseup', 0));
-    return true;
   }
 
   // ── Drawing orchestrator ────────────────────────────────────────────────
@@ -210,7 +377,7 @@
   let drawState = {
     running: false, points: [], index: 0,
     timer: null, onProgress: null, onDone: null,
-    method: 'socket',
+    method: 'cdp',
   };
 
   function stopDrawing() {
@@ -220,84 +387,128 @@
 
   function startDrawing(points, options) {
     stopDrawing();
-    const { chunkSize, chunkDelayMs, brushSize, onProgress, onDone } = options;
+    const { chunkSize, chunkDelayMs, brushSize, onProgress, onDone, log: logOpt } = options;
+    const noop = function () {};
+    const logFn = typeof logOpt === 'function' ? logOpt : noop;
+
     drawState.running = true;
     drawState.points = points;
     drawState.index = 0;
     drawState.onProgress = onProgress || null;
     drawState.onDone = onDone || null;
 
-    // Decide method: socket if available, mouse otherwise
-    checkSocketReady((socketOk) => {
-      drawState.method = socketOk ? 'socket' : 'mouse';
-
-      const canvasEl = drawState.method === 'mouse' ? findGameCanvas() : null;
-      if (drawState.method === 'mouse' && !canvasEl) {
+    // Method priority: CDP debugger > socket > (nothing)
+    (async () => {
+      const canvasEl = findGameCanvas(logFn);
+      if (!canvasEl) {
         drawState.running = false;
-        if (onDone) onDone('No socket and no canvas found');
+        logFn('Draw: no canvas found');
+        if (onDone) onDone('No canvas found');
         return;
       }
 
-      if (drawState.method === 'mouse') {
-        // Pick smallest brush by clicking brush size buttons
-        const brushBtns = Array.from(
-          document.querySelectorAll('.containerBrushSizes div, [class*="brush"] div')
-        );
-        const idx = brushSize <= 4 ? 0 : brushSize <= 10 ? 1 : brushSize <= 20 ? 2 : brushSize <= 32 ? 3 : 4;
-        if (brushBtns[Math.min(idx, brushBtns.length - 1)]) {
-          brushBtns[Math.min(idx, brushBtns.length - 1)].click();
-        }
+      logFn('Draw: attempting debugger attach...');
+      const dbgOk = await checkDebuggerReady();
+      logFn('Draw: debugger=' + dbgOk);
+
+      if (dbgOk) {
+        drawState.method = 'cdp';
+        if (options.onMethod) options.onMethod('cdp (trusted mouse)');
+        logFn('Draw: using CDP (trusted mouse events)');
+        await clickBrushSizeCDP(brushSize, logFn);
         lastClickedColorId = -1;
+        runCDPLoop(points, canvasEl, chunkSize, chunkDelayMs, brushSize, logFn);
+        return;
       }
 
-      // Callback so caller knows which method is being used
-      if (options.onMethod) options.onMethod(drawState.method);
-
-      let currentColorId = -1;
-
-      function tick() {
-        if (!drawState.running) return;
-        if (drawState.method === 'mouse' && canvasEl && !canvasEl.isConnected) {
-          drawState.running = false;
-          if (drawState.onDone) drawState.onDone('Canvas disappeared');
-          return;
-        }
-
-        const end = Math.min(drawState.index + chunkSize, points.length);
-
-        if (drawState.method === 'socket') {
-          const cmds = [];
-          for (let i = drawState.index; i < end; i++) {
-            const p = points[i];
-            cmds.push([0, p.colorId, brushSize,
-              Math.round(p.x), Math.round(p.y),
-              Math.round(p.x), Math.round(p.y)]);
-          }
-          if (cmds.length) sendViaSocket(cmds);
+      logFn('Draw: debugger unavailable, checking socket...');
+      checkSocketReady((socketOk) => {
+        if (socketOk) {
+          drawState.method = 'socket';
+          if (options.onMethod) options.onMethod('socket');
+          logFn('Draw: using socket');
+          runSocketLoop(points, chunkSize, chunkDelayMs, brushSize, logFn);
         } else {
-          for (let i = drawState.index; i < end; i++) {
-            const p = points[i];
-            if (p.colorId !== currentColorId) {
-              clickColor(p.colorId);
-              currentColorId = p.colorId;
-            }
-            if (!drawDotMouse(canvasEl, p.x, p.y)) break;
-          }
-        }
-
-        drawState.index = end;
-        if (drawState.onProgress) drawState.onProgress(drawState.index, points.length);
-
-        if (drawState.index >= points.length) {
           drawState.running = false;
-          if (drawState.onDone) drawState.onDone(null);
-          return;
+          logFn('Draw: no debugger and no socket');
+          if (onDone) onDone('No debugger and no socket available. Reload the page and try again.');
         }
-        drawState.timer = setTimeout(tick, chunkDelayMs);
+      });
+    })();
+  }
+
+  // CDP draw loop: async, processes chunkSize points then waits chunkDelayMs
+  async function runCDPLoop(points, canvasEl, chunkSize, chunkDelayMs, brushSize, logFn) {
+    let currentColorId = -1;
+    let chunkCount = 0;
+
+    async function tick() {
+      if (!drawState.running) return;
+
+      const end = Math.min(drawState.index + chunkSize, points.length);
+
+      // Batch viewport coords for this chunk
+      for (let i = drawState.index; i < end; i++) {
+        if (!drawState.running) return;
+        const p = points[i];
+        if (p.colorId !== currentColorId) {
+          await clickColorCDP(p.colorId, null);
+          currentColorId = p.colorId;
+        }
+        const vp = gameToViewport(canvasEl, p.x, p.y);
+        await debuggerDrawDot(vp.x, vp.y);
+      }
+      chunkCount++;
+      if (chunkCount === 1) logFn('Draw: first CDP chunk done, ' + (end - drawState.index) + ' dots');
+
+      drawState.index = end;
+      if (drawState.onProgress) drawState.onProgress(drawState.index, points.length);
+
+      if (drawState.index >= points.length) {
+        drawState.running = false;
+        logFn('Draw: finished via CDP, points=' + points.length + ', chunks=' + chunkCount);
+        if (drawState.onDone) drawState.onDone(null);
+        return;
       }
 
-      tick();
-    });
+      drawState.timer = setTimeout(() => tick(), chunkDelayMs);
+    }
+
+    await tick();
+  }
+
+  // Socket draw loop: sends drawCommands packets in chunks
+  function runSocketLoop(points, chunkSize, chunkDelayMs, brushSize, logFn) {
+    let chunkCount = 0;
+
+    function tick() {
+      if (!drawState.running) return;
+
+      const end = Math.min(drawState.index + chunkSize, points.length);
+      const cmds = [];
+      for (let i = drawState.index; i < end; i++) {
+        const p = points[i];
+        cmds.push([0, p.colorId, brushSize, Math.round(p.x), Math.round(p.y), Math.round(p.x), Math.round(p.y)]);
+      }
+      if (cmds.length) {
+        sendViaSocket(cmds);
+        chunkCount++;
+        if (chunkCount === 1) logFn('Draw: first socket chunk sent, ' + cmds.length + ' commands');
+      }
+
+      drawState.index = end;
+      if (drawState.onProgress) drawState.onProgress(drawState.index, points.length);
+
+      if (drawState.index >= points.length) {
+        drawState.running = false;
+        logFn('Draw: finished via socket, points=' + points.length + ', chunks=' + chunkCount);
+        if (drawState.onDone) drawState.onDone(null);
+        return;
+      }
+      drawState.timer = setTimeout(tick, chunkDelayMs);
+    }
+
+    tick();
   }
 
   // ── Estimate drawing time ───────────────────────────────────────────────
@@ -306,13 +517,31 @@
     return Math.round((Math.ceil(pointCount / chunkSize) * chunkDelayMs) / 1000);
   }
 
+  // ── Canvas scan ─────────────────────────────────────────────────────────
+
+  function runCanvasScan(logFn) {
+    const log = typeof logFn === 'function' ? logFn : function () {};
+    const chosen = findGameCanvas(log);
+    if (chosen) {
+      const r = chosen.getBoundingClientRect();
+      log('Canvas scan done. Chosen: ' + chosen.width + 'x' + chosen.height + '.');
+      log('  Top-left at viewport: (' + Math.round(r.left) + ', ' + Math.round(r.top) + '). Drawing coords (0,0)-(800,600) map inside this rectangle.');
+    } else {
+      log('Canvas scan done. No canvas chosen.');
+    }
+    return chosen;
+  }
+
   // ── Expose ───────────────────────────────────────────────────────────────
 
   window.__skribblDrawer = {
     PALETTE, CANVAS_W, CANVAS_H,
     processImage, startDrawing, stopDrawing, estimateTime,
+    runCalibration, runCanvasScan,
+    listAllCanvases, findGameCanvas,
+    checkSocketReady, checkDebuggerReady,
+    debuggerAttach, debuggerDetach,
     isDrawing: () => drawState.running,
     getProgress: () => ({ index: drawState.index, total: drawState.points.length }),
-    checkSocketReady,
   };
 })();

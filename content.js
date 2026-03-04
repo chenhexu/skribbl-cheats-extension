@@ -5954,6 +5954,8 @@
               <button id="sag-drawer-process" style="padding:4px 10px;font-size:11px;background:#fbbf24;border:1px solid #f59e0b;border-radius:4px;cursor:pointer;font-weight:600;" disabled>Process image</button>
               <button id="sag-drawer-start" style="padding:4px 10px;font-size:11px;background:#34d399;border:1px solid #10b981;border-radius:4px;cursor:pointer;font-weight:600;color:#fff;" disabled>Start drawing</button>
               <button id="sag-drawer-stop" style="padding:4px 10px;font-size:11px;background:#f87171;border:1px solid #ef4444;border-radius:4px;cursor:pointer;font-weight:600;color:#fff;">Stop</button>
+              <button id="sag-drawer-calibrate" style="padding:4px 10px;font-size:11px;background:#a78bfa;border:1px solid #7c3aed;border-radius:4px;cursor:pointer;font-weight:600;color:#fff;" title="Draw 5 test dots (corners + center) to verify socket/mouse path">Calibrate</button>
+              <button id="sag-drawer-where-canvas" style="padding:4px 10px;font-size:11px;background:#94a3b8;border:1px solid #64748b;border-radius:4px;cursor:pointer;font-weight:600;color:#fff;" title="Log all canvases on the page and which one we use">Where is canvas?</button>
             </div>
             <div id="sag-drawer-progress" style="display:none;margin-top:6px;">
               <div style="background:#e5e7eb;border-radius:4px;height:8px;overflow:hidden;">
@@ -6364,6 +6366,8 @@
       const drawerProcessBtn = panel.querySelector('#sag-drawer-process');
       const drawerStartBtn = panel.querySelector('#sag-drawer-start');
       const drawerStopBtn = panel.querySelector('#sag-drawer-stop');
+      const drawerCalibrateBtn = panel.querySelector('#sag-drawer-calibrate');
+      const drawerWhereCanvasBtn = panel.querySelector('#sag-drawer-where-canvas');
       const drawerProgressWrap = panel.querySelector('#sag-drawer-progress');
       const drawerBar = panel.querySelector('#sag-drawer-bar');
       const drawerPct = panel.querySelector('#sag-drawer-pct');
@@ -6396,6 +6400,24 @@
           const open = drawerSection.style.display === 'none';
           drawerSection.style.display = open ? 'block' : 'none';
           drawerToggle.textContent = open ? 'Hide Auto-Drawer ^' : 'Show Auto-Drawer v';
+          if (open && drawer) {
+            drawerStats.textContent = 'Checking draw methods...';
+            (async () => {
+              const dbgOk = await drawer.checkDebuggerReady();
+              if (dbgOk) {
+                drawerStats.textContent = 'Debugger: ready (trusted mouse). Calibrate to test.';
+                return;
+              }
+              drawer.checkSocketReady(function (socketOk) {
+                if (drawerStats.textContent !== 'Checking draw methods...') return;
+                if (socketOk) {
+                  drawerStats.textContent = 'Socket: ready. Calibrate to test.';
+                } else {
+                  drawerStats.textContent = 'No draw path ready. Reload skribbl.io tab and try again.';
+                }
+              });
+            })();
+          }
         });
       }
 
@@ -6497,8 +6519,9 @@
             chunkSize: chunk,
             chunkDelayMs: delay,
             brushSize,
+            log: (msg) => devLog('info', 'Drawer: ' + msg),
             onMethod: (method) => {
-              drawerStats.textContent = `Drawing via ${method === 'socket' ? 'socket (fast)' : 'mouse fallback'}...`;
+              drawerStats.textContent = `Drawing via ${method}...`;
               devLog('info', `Drawer: using method=${method}`);
             },
             onProgress: (idx, total) => {
@@ -6523,11 +6546,44 @@
       }
 
       if (drawerStopBtn) {
-        drawerStopBtn.addEventListener('click', () => {
-          if (drawer) drawer.stopDrawing();
+        drawerStopBtn.addEventListener('click', async () => {
+          if (drawer) {
+            drawer.stopDrawing();
+            await drawer.debuggerDetach();
+          }
           drawerStartBtn.disabled = !drawerProcessedPoints;
           drawerStats.textContent = 'Drawing stopped.';
           devLog('info', 'Drawer: stopped by user');
+        });
+      }
+
+      if (drawerWhereCanvasBtn && drawer) {
+        drawerWhereCanvasBtn.addEventListener('click', () => {
+          drawerStats.textContent = 'Scanning for canvases... (see Developer log)';
+          devLog('info', 'Drawer: --- Canvas scan ---');
+          drawer.runCanvasScan((msg) => devLog('info', 'Drawer: ' + msg));
+          drawerStats.textContent = 'Canvas scan done. See Developer Panel log.';
+        });
+      }
+
+      if (drawerCalibrateBtn && drawer) {
+        drawerCalibrateBtn.addEventListener('click', async () => {
+          drawerStats.textContent = 'Calibrating...';
+          drawerCalibrateBtn.disabled = true;
+          devLog('info', 'Drawer: calibration started');
+          await drawer.runCalibration({
+            log: (msg) => devLog('info', 'Drawer: ' + msg),
+            onDone: (err) => {
+              drawerCalibrateBtn.disabled = false;
+              if (err) {
+                drawerStats.textContent = 'Calibration failed: ' + err;
+                devLog('info', 'Drawer: calibration failed - ' + err);
+              } else {
+                drawerStats.textContent = 'Calibration done. Check canvas for 5 dots.';
+                devLog('info', 'Drawer: calibration done');
+              }
+            },
+          });
         });
       }
 
