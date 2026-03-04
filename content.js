@@ -5905,6 +5905,63 @@
               <button id="sag-dev-toggle" style="padding:2px 8px;font-size:10px;">Show</button>
             </div>
           </div>
+
+          <!-- ═══ Auto-Drawer section ═══ -->
+          <button id="sag-drawer-toggle" style="width:100%;padding:3px;font-size:10px;margin-bottom:4px;background:#fef3c7;border:1px solid #fbbf24;border-radius:4px;cursor:pointer;text-align:center;font-weight:600;color:#92400e;">Show Auto-Drawer v</button>
+          <div id="sag-drawer" style="display:none;border:1px solid #fbbf24;border-radius:6px;padding:8px;background:#fffbeb;margin-bottom:4px;">
+            <div style="margin-bottom:6px;">
+              <label style="font-size:11px;font-weight:600;display:block;margin-bottom:3px;">Upload image:</label>
+              <input id="sag-drawer-file" type="file" accept="image/*" style="font-size:10px;width:100%;box-sizing:border-box;" />
+            </div>
+            <canvas id="sag-drawer-preview" width="200" height="150" style="display:none;border:1px solid #e5e7eb;border-radius:4px;margin-bottom:6px;max-width:100%;background:#fff;"></canvas>
+            <div style="font-size:11px;display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;margin-bottom:6px;">
+              <label style="display:flex;flex-direction:column;gap:2px;">
+                <span>Density (1-10):</span>
+                <input id="sag-drawer-density" type="range" min="1" max="10" value="5" style="width:100%;" />
+                <span style="text-align:center;font-size:10px;color:#6b7280;" id="sag-drawer-density-val">5</span>
+              </label>
+              <label style="display:flex;flex-direction:column;gap:2px;">
+                <span>Brush size:</span>
+                <select id="sag-drawer-brush" style="font-size:10px;padding:2px;">
+                  <option value="4">XS (4)</option>
+                  <option value="10" selected>S (10)</option>
+                  <option value="20">M (20)</option>
+                  <option value="32">L (32)</option>
+                  <option value="40">XL (40)</option>
+                </select>
+              </label>
+              <label style="display:flex;flex-direction:column;gap:2px;">
+                <span>BG removal:</span>
+                <input id="sag-drawer-bg" type="range" min="0" max="120" value="30" style="width:100%;" />
+                <span style="text-align:center;font-size:10px;color:#6b7280;" id="sag-drawer-bg-val">30</span>
+              </label>
+              <label style="display:flex;flex-direction:column;gap:2px;">
+                <span>Max points (0=no cap):</span>
+                <input id="sag-drawer-max" type="number" min="0" max="50000" step="100" value="0" style="font-size:10px;width:100%;box-sizing:border-box;padding:2px 4px;" />
+              </label>
+              <label style="display:flex;flex-direction:column;gap:2px;">
+                <span>Chunk size:</span>
+                <input id="sag-drawer-chunk" type="number" min="1" max="500" step="10" value="80" style="font-size:10px;width:100%;box-sizing:border-box;padding:2px 4px;" />
+              </label>
+              <label style="display:flex;flex-direction:column;gap:2px;">
+                <span>Chunk delay (ms):</span>
+                <input id="sag-drawer-delay" type="number" min="0" max="500" step="5" value="10" style="font-size:10px;width:100%;box-sizing:border-box;padding:2px 4px;" />
+              </label>
+            </div>
+            <div id="sag-drawer-stats" style="font-size:10px;color:#6b7280;margin-bottom:6px;">Upload an image to begin.</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button id="sag-drawer-process" style="padding:4px 10px;font-size:11px;background:#fbbf24;border:1px solid #f59e0b;border-radius:4px;cursor:pointer;font-weight:600;" disabled>Process image</button>
+              <button id="sag-drawer-start" style="padding:4px 10px;font-size:11px;background:#34d399;border:1px solid #10b981;border-radius:4px;cursor:pointer;font-weight:600;color:#fff;" disabled>Start drawing</button>
+              <button id="sag-drawer-stop" style="padding:4px 10px;font-size:11px;background:#f87171;border:1px solid #ef4444;border-radius:4px;cursor:pointer;font-weight:600;color:#fff;">Stop</button>
+            </div>
+            <div id="sag-drawer-progress" style="display:none;margin-top:6px;">
+              <div style="background:#e5e7eb;border-radius:4px;height:8px;overflow:hidden;">
+                <div id="sag-drawer-bar" style="background:#fbbf24;height:100%;width:0%;transition:width 0.15s;"></div>
+              </div>
+              <div id="sag-drawer-pct" style="font-size:10px;text-align:center;color:#92400e;margin-top:2px;">0%</div>
+            </div>
+          </div>
+
           <!-- Resize edges: all 8 directions -->
           <div id="sag-resize-n"  class="sag-resize-edge" style="position:absolute;top:0;left:8px;right:8px;height:6px;cursor:ns-resize;z-index:10;"></div>
           <div id="sag-resize-s"  class="sag-resize-edge" style="position:absolute;bottom:0;left:8px;right:8px;height:6px;cursor:ns-resize;z-index:10;"></div>
@@ -6287,6 +6344,172 @@
         const text = state.devLog.map(e => `[${e.ts}] [${e.category}] ${e.message}`).join('\n');
         navigator.clipboard?.writeText(text).then(() => devLog('info', 'Log copied to clipboard'));
       });
+
+      // ═══ Auto-Drawer event wiring ═══════════════════════════════════════
+      const drawer = window.__skribblDrawer;
+      const drawerSection = panel.querySelector('#sag-drawer');
+      const drawerToggle = panel.querySelector('#sag-drawer-toggle');
+      const drawerFile = panel.querySelector('#sag-drawer-file');
+      const drawerPreview = panel.querySelector('#sag-drawer-preview');
+      const drawerDensity = panel.querySelector('#sag-drawer-density');
+      const drawerDensityVal = panel.querySelector('#sag-drawer-density-val');
+      const drawerBrush = panel.querySelector('#sag-drawer-brush');
+      const drawerBg = panel.querySelector('#sag-drawer-bg');
+      const drawerBgVal = panel.querySelector('#sag-drawer-bg-val');
+      const drawerMax = panel.querySelector('#sag-drawer-max');
+      const drawerChunk = panel.querySelector('#sag-drawer-chunk');
+      const drawerDelay = panel.querySelector('#sag-drawer-delay');
+      const drawerStats = panel.querySelector('#sag-drawer-stats');
+      const drawerProcessBtn = panel.querySelector('#sag-drawer-process');
+      const drawerStartBtn = panel.querySelector('#sag-drawer-start');
+      const drawerStopBtn = panel.querySelector('#sag-drawer-stop');
+      const drawerProgressWrap = panel.querySelector('#sag-drawer-progress');
+      const drawerBar = panel.querySelector('#sag-drawer-bar');
+      const drawerPct = panel.querySelector('#sag-drawer-pct');
+
+      let drawerLoadedImg = null;
+      let drawerProcessedPoints = null;
+
+      if (drawerToggle) {
+        drawerToggle.addEventListener('click', () => {
+          const open = drawerSection.style.display === 'none';
+          drawerSection.style.display = open ? 'block' : 'none';
+          drawerToggle.textContent = open ? 'Hide Auto-Drawer ^' : 'Show Auto-Drawer v';
+        });
+      }
+
+      if (drawerDensity) {
+        drawerDensity.addEventListener('input', () => {
+          drawerDensityVal.textContent = drawerDensity.value;
+          updateDrawerEstimate();
+        });
+      }
+      if (drawerBg) {
+        drawerBg.addEventListener('input', () => {
+          drawerBgVal.textContent = drawerBg.value;
+        });
+      }
+
+      if (drawerFile) {
+        drawerFile.addEventListener('change', (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          const img = new Image();
+          img.onload = () => {
+            drawerLoadedImg = img;
+            drawerProcessedPoints = null;
+            drawerProcessBtn.disabled = false;
+            drawerStartBtn.disabled = true;
+            const preCtx = drawerPreview.getContext('2d');
+            preCtx.clearRect(0, 0, 200, 150);
+            const scale = Math.min(200 / img.width, 150 / img.height);
+            const w = img.width * scale, h = img.height * scale;
+            preCtx.drawImage(img, (200 - w) / 2, (150 - h) / 2, w, h);
+            drawerPreview.style.display = 'block';
+            drawerStats.textContent = `Image loaded: ${img.width}x${img.height}. Click "Process image".`;
+            devLog('info', `Drawer: image loaded ${img.width}x${img.height}`);
+          };
+          img.src = URL.createObjectURL(file);
+        });
+      }
+
+      function updateDrawerEstimate() {
+        if (!drawerProcessedPoints) return;
+        const chunk = parseInt(drawerChunk.value) || 80;
+        const delay = parseInt(drawerDelay.value) || 10;
+        const est = drawer.estimateTime(drawerProcessedPoints.length, chunk, delay);
+        drawerStats.textContent = `${drawerProcessedPoints.length} points - ~${est}s to draw`;
+      }
+
+      if (drawerProcessBtn) {
+        drawerProcessBtn.addEventListener('click', () => {
+          if (!drawerLoadedImg || !drawer) return;
+          const density = parseInt(drawerDensity.value) || 5;
+          const bgThreshold = parseInt(drawerBg.value) || 30;
+          const maxPts = parseInt(drawerMax.value) || 0;
+
+          const result = drawer.processImage(drawerLoadedImg, {
+            bgThreshold,
+            density,
+            maxPoints: maxPts,
+          });
+
+          drawerProcessedPoints = result.points;
+          drawerStartBtn.disabled = false;
+
+          // Show processed preview
+          const preCtx = drawerPreview.getContext('2d');
+          preCtx.clearRect(0, 0, 200, 150);
+          const scale = Math.min(200 / drawer.CANVAS_W, 150 / drawer.CANVAS_H);
+          const pw = drawer.CANVAS_W * scale, ph = drawer.CANVAS_H * scale;
+          const ox = (200 - pw) / 2, oy = (150 - ph) / 2;
+          preCtx.drawImage(result.canvas, ox, oy, pw, ph);
+
+          updateDrawerEstimate();
+          devLog('info', `Drawer: processed ${result.points.length} points (density=${density}, bg=${bgThreshold})`);
+        });
+      }
+
+      if (drawerStartBtn) {
+        drawerStartBtn.addEventListener('click', () => {
+          if (!drawerProcessedPoints || !drawer) return;
+          const brushSize = parseInt(drawerBrush.value) || 10;
+          const chunk = parseInt(drawerChunk.value) || 80;
+          const delay = parseInt(drawerDelay.value) || 10;
+
+          drawerProgressWrap.style.display = 'block';
+          drawerBar.style.width = '0%';
+          drawerPct.textContent = '0%';
+          drawerStartBtn.disabled = true;
+
+          devLog('info', `Drawer: starting ${drawerProcessedPoints.length} points, brush=${brushSize}, chunk=${chunk}, delay=${delay}ms`);
+
+          drawer.startDrawing(drawerProcessedPoints, {
+            chunkSize: chunk,
+            chunkDelayMs: delay,
+            brushSize,
+            method: 'socket',
+            onProgress: (idx, total) => {
+              const pct = Math.round((idx / total) * 100);
+              drawerBar.style.width = pct + '%';
+              drawerPct.textContent = pct + '%';
+            },
+            onDone: (err) => {
+              if (err) {
+                drawerStats.textContent = 'Draw failed: ' + err;
+                devLog('info', `Drawer: failed - ${err}`);
+              } else {
+                drawerStats.textContent = 'Drawing complete!';
+                devLog('info', 'Drawer: drawing complete');
+              }
+              drawerStartBtn.disabled = false;
+              drawerBar.style.width = '100%';
+              drawerPct.textContent = err ? 'Failed' : 'Done!';
+            },
+          });
+        });
+      }
+
+      if (drawerStopBtn) {
+        drawerStopBtn.addEventListener('click', () => {
+          if (drawer) drawer.stopDrawing();
+          drawerStartBtn.disabled = !drawerProcessedPoints;
+          drawerStats.textContent = 'Drawing stopped.';
+          devLog('info', 'Drawer: stopped by user');
+        });
+      }
+
+      if (drawerChunk) drawerChunk.addEventListener('change', updateDrawerEstimate);
+      if (drawerDelay) drawerDelay.addEventListener('change', updateDrawerEstimate);
+      if (drawerMax) {
+        drawerMax.addEventListener('change', () => {
+          // Reprocess if max changed and we have an image
+          if (drawerProcessedPoints && drawerLoadedImg) {
+            drawerProcessBtn.click();
+          }
+        });
+      }
+      // ═══ End Auto-Drawer wiring ═════════════════════════════════════════
 
       state.ui = {
         panel,

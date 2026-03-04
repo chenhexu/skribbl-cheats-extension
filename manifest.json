@@ -2,12 +2,12 @@
   "manifest_version": 3,
   "name": "Skribbl Auto Guesser",
   "version": "1.0.0",
-  "description": "Parse skribbl.io hints, get candidate words, and auto-send guesses with delay, dot-prefix, and close-hit resend.",
+  "description": "Auto-guesser and auto-drawer for skribbl.io. Parse hints, suggest words, auto-send guesses, and auto-draw images on the canvas.",
   "permissions": ["storage"],
   "content_scripts": [
     {
       "matches": ["https://skribbl.io/*"],
-      "js": ["content.js"],
+      "js": ["drawer.js", "content.js"],
       "run_at": "document_idle"
     }
   ]
