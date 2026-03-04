@@ -5910,8 +5910,9 @@
           <button id="sag-drawer-toggle" style="width:100%;padding:3px;font-size:10px;margin-bottom:4px;background:#fef3c7;border:1px solid #fbbf24;border-radius:4px;cursor:pointer;text-align:center;font-weight:600;color:#92400e;">Show Auto-Drawer v</button>
           <div id="sag-drawer" style="display:none;border:1px solid #fbbf24;border-radius:6px;padding:8px;background:#fffbeb;margin-bottom:4px;">
             <div style="margin-bottom:6px;">
-              <label style="font-size:11px;font-weight:600;display:block;margin-bottom:3px;">Upload image:</label>
+              <label style="font-size:11px;font-weight:600;display:block;margin-bottom:3px;">Upload or drag-and-drop image:</label>
               <input id="sag-drawer-file" type="file" accept="image/*" style="font-size:10px;width:100%;box-sizing:border-box;" />
+              <div style="font-size:9px;color:#92400e;margin-top:2px;">You can also drag an image directly onto this panel.</div>
             </div>
             <canvas id="sag-drawer-preview" width="200" height="150" style="display:none;border:1px solid #e5e7eb;border-radius:4px;margin-bottom:6px;max-width:100%;background:#fff;"></canvas>
             <div style="font-size:11px;display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;margin-bottom:6px;">
@@ -6370,6 +6371,26 @@
       let drawerLoadedImg = null;
       let drawerProcessedPoints = null;
 
+      function loadDrawerImage(file) {
+        if (!file || !file.type.startsWith('image/')) return;
+        const img = new Image();
+        img.onload = () => {
+          drawerLoadedImg = img;
+          drawerProcessedPoints = null;
+          drawerProcessBtn.disabled = false;
+          drawerStartBtn.disabled = true;
+          const preCtx = drawerPreview.getContext('2d');
+          preCtx.clearRect(0, 0, 200, 150);
+          const scale = Math.min(200 / img.width, 150 / img.height);
+          const w = img.width * scale, h = img.height * scale;
+          preCtx.drawImage(img, (200 - w) / 2, (150 - h) / 2, w, h);
+          drawerPreview.style.display = 'block';
+          drawerStats.textContent = `Image loaded: ${img.width}x${img.height}. Click "Process image".`;
+          devLog('info', `Drawer: image loaded ${img.width}x${img.height}`);
+        };
+        img.src = URL.createObjectURL(file);
+      }
+
       if (drawerToggle) {
         drawerToggle.addEventListener('click', () => {
           const open = drawerSection.style.display === 'none';
@@ -6390,26 +6411,34 @@
         });
       }
 
+      // File input
       if (drawerFile) {
         drawerFile.addEventListener('change', (e) => {
-          const file = e.target.files[0];
-          if (!file) return;
-          const img = new Image();
-          img.onload = () => {
-            drawerLoadedImg = img;
-            drawerProcessedPoints = null;
-            drawerProcessBtn.disabled = false;
-            drawerStartBtn.disabled = true;
-            const preCtx = drawerPreview.getContext('2d');
-            preCtx.clearRect(0, 0, 200, 150);
-            const scale = Math.min(200 / img.width, 150 / img.height);
-            const w = img.width * scale, h = img.height * scale;
-            preCtx.drawImage(img, (200 - w) / 2, (150 - h) / 2, w, h);
-            drawerPreview.style.display = 'block';
-            drawerStats.textContent = `Image loaded: ${img.width}x${img.height}. Click "Process image".`;
-            devLog('info', `Drawer: image loaded ${img.width}x${img.height}`);
-          };
-          img.src = URL.createObjectURL(file);
+          loadDrawerImage(e.target.files[0]);
+        });
+      }
+
+      // Drag-and-drop on the drawer section
+      if (drawerSection) {
+        ['dragenter', 'dragover'].forEach(ev => {
+          drawerSection.addEventListener(ev, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            drawerSection.style.outline = '2px dashed #f59e0b';
+            drawerSection.style.outlineOffset = '-4px';
+          });
+        });
+        ['dragleave', 'drop'].forEach(ev => {
+          drawerSection.addEventListener(ev, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            drawerSection.style.outline = '';
+            drawerSection.style.outlineOffset = '';
+          });
+        });
+        drawerSection.addEventListener('drop', (e) => {
+          const file = e.dataTransfer?.files?.[0];
+          if (file) loadDrawerImage(file);
         });
       }
 
@@ -6468,7 +6497,6 @@
             chunkSize: chunk,
             chunkDelayMs: delay,
             brushSize,
-            method: 'socket',
             onProgress: (idx, total) => {
               const pct = Math.round((idx / total) * 100);
               drawerBar.style.width = pct + '%';
