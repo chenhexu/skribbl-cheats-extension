@@ -1,0 +1,34 @@
+Skribbl Auto Guesser is a helper for skribbl.io. It reads the game hint from the page, matches it against a built-in word list, and lets you send guesses by clicking suggestions or by running an automatic guesser with a delay you control.
+
+HINT PARSING AND WORD LIST
+• Reads the current hint (e.g. "c_t", "_____", or length-only) from the skribbl.io UI and filters a large built-in word list so only matching words are shown.
+• Supports underscore patterns, letter counts, and multi-word patterns (e.g. "5-8" for hyphenated words). Words are ranked and shown in a scrollable grid.
+• You can add your own words, remove words, and deduplicate the list. The word list is stored locally in your browser.
+
+MANUAL GUESSING
+• Click any suggested word to send it as your guess in the chat.
+• Use the search box to filter candidates by typing; the grid updates as you type.
+• Press Enter to send the first matching result, or press 1–9 to send the 1st–9th result without clicking.
+
+AUTOMATIC GUESSING (BOT)
+• Click "Start" to run the bot: it sends guesses from the candidate list one at a time, with a delay between each guess.
+• "Delay (ms)" sets the time between automatic guesses (0–8000 ms). "Stop" pauses the bot.
+• "Refresh parse" re-reads the hint and rebuilds the candidate list and queue.
+
+DOT PREFIX AND CLOSE-HIT
+• With "Dot prefix" enabled, guesses are sent with a leading dot (e.g. ".word"). If the game replies "word is close!", the extension can resend the word without the dot so you do not use an extra guess.
+• A dedicated close-hit watcher runs right after each dot-prefixed send and can resend without the dot when it sees the "is close!" message. You can set how often it checks (close-hit scan rate, in the details section).
+• "Bot refresh rate" (in details) controls how often the extension checks the page for hint and chat changes. "Close-hit scan rate" controls how often the close-hit watcher checks after a dot send.
+
+PROTECTION AND ROUND HANDLING
+• The extension detects game phase (guessing, drawing, between rounds) and only runs the bot when you are in the guessing phase. It stops or pauses when you are drawing or when the round ends.
+• It detects when you or others guess the word, when the round ends ("the word was"), and when a new round starts. It resets its state so it does not resend old words in the next round.
+• If the game shows a spam warning in chat, the extension applies a cooldown and, after repeated detection, stops the bot to reduce the risk of being kicked.
+
+PANEL AND SETTINGS
+• The main panel shows the current hint, the search box, and the grid of suggested words. It can be dragged, resized from any edge or corner, and collapsed to a title bar (use the +/- button in the header).
+• A "Details" section (expandable) shows status, raw hint, underscore pattern, letter pattern, word count, candidate count, last guess, mode, game phase, close-hit state, and spam cooldown. It also has the word add/remove/dedupe controls and the refresh rate and close-hit scan sliders.
+• An optional Developer Panel (toggle in details) opens a separate window with a log of bot events, your detected nickname, and tools such as snapshot state, force hide/show words, clear sent set, simulate new round, and copy log. Useful for debugging or checking behavior.
+
+PRIVACY AND SCOPE
+• The extension runs only on skribbl.io. It does not send your data to any external server. Settings, word list, and panel positions are stored locally in your browser (localStorage).

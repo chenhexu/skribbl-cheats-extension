@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Skribbl Auto Guesser",
+  "version": "1.0.0",
+  "description": "Parse skribbl.io hints, get candidate words, and auto-send guesses with delay, dot-prefix, and close-hit resend.",
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": ["https://skribbl.io/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
