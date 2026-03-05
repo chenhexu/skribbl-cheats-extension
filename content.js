@@ -5936,6 +5936,10 @@
                 <input id="sag-drawer-bg" type="range" min="0" max="120" value="30" style="width:100%;" />
                 <span style="text-align:center;font-size:10px;color:#6b7280;" id="sag-drawer-bg-val">30</span>
               </label>
+              <label style="display:flex;align-items:center;gap:4px;font-size:11px;" title="Include white in palette. Uncheck to skip white (transparent regions only).">
+                <input id="sag-drawer-use-white" type="checkbox" checked />
+                <span>Use white</span>
+              </label>
               <label style="display:flex;flex-direction:column;gap:2px;">
                 <span>Max points (0=no cap):</span>
                 <input id="sag-drawer-max" type="number" min="0" max="50000" step="100" value="0" style="font-size:10px;width:100%;box-sizing:border-box;padding:2px 4px;" />
@@ -6359,6 +6363,7 @@
       const drawerBrush = panel.querySelector('#sag-drawer-brush');
       const drawerBg = panel.querySelector('#sag-drawer-bg');
       const drawerBgVal = panel.querySelector('#sag-drawer-bg-val');
+      const drawerUseWhite = panel.querySelector('#sag-drawer-use-white');
       const drawerMax = panel.querySelector('#sag-drawer-max');
       const drawerChunk = panel.querySelector('#sag-drawer-chunk');
       const drawerDelay = panel.querySelector('#sag-drawer-delay');
@@ -6421,15 +6426,33 @@
         });
       }
 
+      function invalidateProcessed(reason) {
+        drawerProcessedPoints = null;
+        if (drawerStartBtn) drawerStartBtn.disabled = true;
+        if (drawerStats) drawerStats.textContent = reason || 'Click Process image to apply.';
+      }
+
       if (drawerDensity) {
         drawerDensity.addEventListener('input', () => {
           drawerDensityVal.textContent = drawerDensity.value;
+          invalidateProcessed('Density changed. Click Process image to apply.');
           updateDrawerEstimate();
         });
       }
       if (drawerBg) {
         drawerBg.addEventListener('input', () => {
           drawerBgVal.textContent = drawerBg.value;
+          invalidateProcessed('BG removal changed. Click Process image to apply.');
+        });
+      }
+      if (drawerMax) {
+        drawerMax.addEventListener('input', () => {
+          invalidateProcessed('Max points changed. Click Process image to apply.');
+        });
+      }
+      if (drawerUseWhite) {
+        drawerUseWhite.addEventListener('change', () => {
+          invalidateProcessed('White palette changed. Click Process image to apply.');
         });
       }
 
@@ -6479,10 +6502,13 @@
           const bgThreshold = parseInt(drawerBg.value) || 30;
           const maxPts = parseInt(drawerMax.value) || 0;
 
+          const useWhite = drawerUseWhite ? drawerUseWhite.checked : true;
+
           const result = drawer.processImage(drawerLoadedImg, {
             bgThreshold,
             density,
             maxPoints: maxPts,
+            useWhite,
           });
 
           drawerProcessedPoints = result.points;
@@ -6589,14 +6615,6 @@
 
       if (drawerChunk) drawerChunk.addEventListener('change', updateDrawerEstimate);
       if (drawerDelay) drawerDelay.addEventListener('change', updateDrawerEstimate);
-      if (drawerMax) {
-        drawerMax.addEventListener('change', () => {
-          // Reprocess if max changed and we have an image
-          if (drawerProcessedPoints && drawerLoadedImg) {
-            drawerProcessBtn.click();
-          }
-        });
-      }
       // ═══ End Auto-Drawer wiring ═════════════════════════════════════════
 
       state.ui = {

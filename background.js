@@ -48,6 +48,21 @@ async function dispatchDot(tabId, x, y) {
   });
 }
 
+async function dispatchStroke(tabId, x1, y1, x2, y2) {
+  await cdpCommand(tabId, 'Input.dispatchMouseEvent', {
+    type: 'mouseMoved', x: x1, y: y1,
+  });
+  await cdpCommand(tabId, 'Input.dispatchMouseEvent', {
+    type: 'mousePressed', x: x1, y: y1, button: 'left', clickCount: 1,
+  });
+  await cdpCommand(tabId, 'Input.dispatchMouseEvent', {
+    type: 'mouseMoved', x: x2, y: y2,
+  });
+  await cdpCommand(tabId, 'Input.dispatchMouseEvent', {
+    type: 'mouseReleased', x: x2, y: y2, button: 'left', clickCount: 1,
+  });
+}
+
 async function dispatchClick(tabId, x, y) {
   await cdpCommand(tabId, 'Input.dispatchMouseEvent', {
     type: 'mouseMoved', x, y,
@@ -100,6 +115,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: false, error: e.message });
       }
     })();
+    return true;
+  }
+
+  if (msg.action === 'drawStroke') {
+    ensureAttached(tabId)
+      .then(() => dispatchStroke(tabId, msg.x1, msg.y1, msg.x2, msg.y2))
+      .then(() => sendResponse({ ok: true }))
+      .catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
   }
 

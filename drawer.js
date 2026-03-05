@@ -36,17 +36,50 @@
 
   const PALETTE_NO_WHITE = PALETTE.filter(c => c.id !== 0);
 
-  // ── Color distance ───────────────────────────────────────────────────────
+  // ── sRGB -> CIELAB for perceptual color matching ────────────────────────
+
+  function srgbToLinear(c) {
+    c /= 255;
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }
+
+  function rgbToLab(r, g, b) {
+    let x = srgbToLinear(r) * 0.4124564 + srgbToLinear(g) * 0.3575761 + srgbToLinear(b) * 0.1804375;
+    let y = srgbToLinear(r) * 0.2126729 + srgbToLinear(g) * 0.7151522 + srgbToLinear(b) * 0.0721750;
+    let z = srgbToLinear(r) * 0.0193339 + srgbToLinear(g) * 0.1191920 + srgbToLinear(b) * 0.9503041;
+    x /= 0.95047; y /= 1.00000; z /= 1.08883;
+    const f = (t) => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+    return {
+      L: 116 * f(y) - 16,
+      a: 500 * (f(x) - f(y)),
+      b: 200 * (f(y) - f(z)),
+    };
+  }
+
+  // Precompute LAB for each palette entry
+  PALETTE.forEach(c => {
+    const lab = rgbToLab(c.r, c.g, c.b);
+    c.L = lab.L; c.A = lab.a; c.B = lab.b;
+  });
+
+  // ── Color distance (perceptual, CIELAB Delta E) ─────────────────────────
+
   function colorDistSq(r1, g1, b1, r2, g2, b2) {
     const dr = r1 - r2, dg = g1 - g2, db = b1 - b2;
     return dr * dr + dg * dg + db * db;
   }
 
+  function labDistSq(L1, a1, b1, L2, a2, b2) {
+    const dL = L1 - L2, da = a1 - a2, db = b1 - b2;
+    return dL * dL + da * da + db * db;
+  }
+
   function nearestColorId(r, g, b, skipWhite) {
     const pal = skipWhite ? PALETTE_NO_WHITE : PALETTE;
+    const lab = rgbToLab(r, g, b);
     let best = pal[0], bestD = Infinity;
     for (let i = 0; i < pal.length; i++) {
-      const d = colorDistSq(r, g, b, pal[i].r, pal[i].g, pal[i].b);
+      const d = labDistSq(lab.L, lab.a, lab.b, pal[i].L, pal[i].A, pal[i].B);
       if (d < bestD) { bestD = d; best = pal[i]; }
     }
     return best.id;
@@ -80,7 +113,7 @@
     return canvas;
   }
 
-  function sampleToPoints(canvas, step) {
+  function sampleToPoints(canvas, step, skipWhite) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const d = imgData.data, w = canvas.width;
@@ -89,7 +122,9 @@
       for (let x = 0; x < w; x += step) {
         const i = (y * w + x) * 4;
         if (d[i + 3] < 128) continue;
-        points.push({ x, y, colorId: nearestColorId(d[i], d[i + 1], d[i + 2], true) });
+        const cId = nearestColorId(d[i], d[i + 1], d[i + 2], skipWhite);
+        if (skipWhite && cId === 0) continue;
+        points.push({ x, y, colorId: cId });
       }
     }
     return points;
@@ -103,13 +138,61 @@
     return out;
   }
 
+  // ── Path ordering: nearest-neighbor within each color group ──────────
+  // Groups points by colorId (preserving back-to-front order), then within
+  // each group reorders by greedy nearest-neighbor to minimise pen travel.
+
+  function orderPointsByPath(points) {
+    if (points.length <= 1) return points;
+
+    // Group by color, preserving order of first appearance (back-to-front)
+    const groupMap = new Map();
+    for (let i = 0; i < points.length; i++) {
+      const cId = points[i].colorId;
+      if (!groupMap.has(cId)) groupMap.set(cId, []);
+      groupMap.get(cId).push(points[i]);
+    }
+
+    const result = [];
+    for (const [, group] of groupMap) {
+      if (group.length <= 2) {
+        for (let i = 0; i < group.length; i++) result.push(group[i]);
+        continue;
+      }
+      // Nearest-neighbor ordering
+      const used = new Uint8Array(group.length);
+      const ordered = [group[0]];
+      used[0] = 1;
+      let cx = group[0].x, cy = group[0].y;
+      for (let n = 1; n < group.length; n++) {
+        let bestIdx = -1, bestD = Infinity;
+        for (let j = 0; j < group.length; j++) {
+          if (used[j]) continue;
+          const dx = group[j].x - cx, dy = group[j].y - cy;
+          const d = dx * dx + dy * dy;
+          if (d < bestD) { bestD = d; bestIdx = j; }
+        }
+        used[bestIdx] = 1;
+        ordered.push(group[bestIdx]);
+        cx = group[bestIdx].x;
+        cy = group[bestIdx].y;
+      }
+      for (let i = 0; i < ordered.length; i++) result.push(ordered[i]);
+    }
+    return result;
+  }
+
   function processImage(img, options) {
-    const { bgThreshold, density, maxPoints } = options;
+    const { bgThreshold, density, maxPoints, useWhite } = options;
+    const skipWhite = useWhite === false;
     const step = Math.max(1, Math.round(11 - density));
     let canvas = resizeImageToCanvas(img);
     if (bgThreshold > 0) canvas = removeBackground(canvas, bgThreshold);
-    let points = sampleToPoints(canvas, step);
-    points.sort((a, b) => a.colorId - b.colorId);
+    let points = sampleToPoints(canvas, step, skipWhite);
+    // Draw back-to-front: higher color ids first, black (1) last so contour stays on top
+    points.sort((a, b) => b.colorId - a.colorId);
+    // Path-optimize within each color group (nearest-neighbor)
+    points = orderPointsByPath(points);
     if (maxPoints > 0 && points.length > maxPoints) points = downsamplePoints(points, maxPoints);
     return { canvas, points };
   }
@@ -167,8 +250,16 @@
     return sendToBg({ action: 'drawDots', points: points });
   }
 
+  async function debuggerDrawStroke(x1, y1, x2, y2) {
+    return sendToBg({ action: 'drawStroke', x1, y1, x2, y2 });
+  }
+
   async function debuggerClickAt(viewportX, viewportY) {
     return sendToBg({ action: 'clickAt', x: viewportX, y: viewportY });
+  }
+
+  function delay(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
   }
 
   async function checkDebuggerReady() {
@@ -286,6 +377,7 @@
       if (colorDistSq(+m[1], +m[2], +m[3], target.r, target.g, target.b) < 400) {
         const c = elementCenter(btn);
         await debuggerClickAt(c.x, c.y);
+        await delay(80);
         lastClickedColorId = colorId;
         return;
       }
@@ -300,7 +392,10 @@
     if (btn) {
       const c = elementCenter(btn);
       await debuggerClickAt(c.x, c.y);
-      if (logFn) logFn('clickBrushSizeCDP: clicked index=' + idx);
+      await delay(120);
+      if (logFn) logFn('clickBrushSizeCDP: brushSize=' + brushSize + ' -> index=' + idx + ' (wait applied)');
+    } else if (logFn) {
+      logFn('clickBrushSizeCDP: no brush button found (count=' + btns.length + ')');
     }
   }
 
@@ -414,7 +509,7 @@
       if (dbgOk) {
         drawState.method = 'cdp';
         if (options.onMethod) options.onMethod('cdp (trusted mouse)');
-        logFn('Draw: using CDP (trusted mouse events)');
+        logFn('Draw: using CDP, brushSize=' + brushSize + ', chunkSize=' + chunkSize + ', delay=' + chunkDelayMs + 'ms');
         await clickBrushSizeCDP(brushSize, logFn);
         lastClickedColorId = -1;
         runCDPLoop(points, canvasEl, chunkSize, chunkDelayMs, brushSize, logFn);
@@ -437,17 +532,20 @@
     })();
   }
 
-  // CDP draw loop: async, processes chunkSize points then waits chunkDelayMs
+  // Max distance (in game coords) for a stroke between two same-color points
+  const MAX_STROKE_DIST = 50;
+
+  // CDP draw loop: uses strokes for nearby same-color consecutive points
   async function runCDPLoop(points, canvasEl, chunkSize, chunkDelayMs, brushSize, logFn) {
     let currentColorId = -1;
     let chunkCount = 0;
+    let strokeCount = 0, dotCount = 0;
 
     async function tick() {
       if (!drawState.running) return;
 
       const end = Math.min(drawState.index + chunkSize, points.length);
 
-      // Batch viewport coords for this chunk
       for (let i = drawState.index; i < end; i++) {
         if (!drawState.running) return;
         const p = points[i];
@@ -455,18 +553,34 @@
           await clickColorCDP(p.colorId, null);
           currentColorId = p.colorId;
         }
+
+        // Try to draw a stroke to the next point if same color and nearby
+        if (i + 1 < end && points[i + 1].colorId === p.colorId) {
+          const np = points[i + 1];
+          const dx = np.x - p.x, dy = np.y - p.y;
+          if (dx * dx + dy * dy <= MAX_STROKE_DIST * MAX_STROKE_DIST) {
+            const vp1 = gameToViewport(canvasEl, p.x, p.y);
+            const vp2 = gameToViewport(canvasEl, np.x, np.y);
+            await debuggerDrawStroke(vp1.x, vp1.y, vp2.x, vp2.y);
+            strokeCount++;
+            i++;
+            continue;
+          }
+        }
+
         const vp = gameToViewport(canvasEl, p.x, p.y);
         await debuggerDrawDot(vp.x, vp.y);
+        dotCount++;
       }
       chunkCount++;
-      if (chunkCount === 1) logFn('Draw: first CDP chunk done, ' + (end - drawState.index) + ' dots');
+      if (chunkCount === 1) logFn('Draw: first CDP chunk done');
 
       drawState.index = end;
       if (drawState.onProgress) drawState.onProgress(drawState.index, points.length);
 
       if (drawState.index >= points.length) {
         drawState.running = false;
-        logFn('Draw: finished via CDP, points=' + points.length + ', chunks=' + chunkCount);
+        logFn('Draw: finished via CDP, points=' + points.length + ', strokes=' + strokeCount + ', dots=' + dotCount + ', chunks=' + chunkCount);
         if (drawState.onDone) drawState.onDone(null);
         return;
       }
