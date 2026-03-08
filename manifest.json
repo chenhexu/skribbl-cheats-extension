@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Skribbl Auto Guesser",
-  "version": "1.0.0",
+  "version": "2.1.0",
   "description": "Auto-guesser and auto-drawer for skribbl.io. Parse hints, suggest words, auto-send guesses, and auto-draw images on the canvas.",
   "permissions": ["storage", "debugger"],
   "background": {

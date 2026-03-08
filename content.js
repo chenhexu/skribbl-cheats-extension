@@ -21,11 +21,16 @@
       detailsCollapsed: false,
       devPanelWidth: 300,
       devPanelHeight: 420,
+      drawerFloatWidth: 320,
+      drawerFloatHeight: 380,
+      drawerFloatX: null,
+      drawerFloatY: null,
     };
 
     const PANEL_SIZE = { minWidth: 260, minHeight: 200, maxWidth: 1400, maxHeight: 1200 };
     const DEV_PANEL_SIZE = { minWidth: 260, minHeight: 280, maxWidth: 1000, maxHeight: 1200 };
-    const SCRIPT_VERSION = 'v1.0.0';
+    const DRAWER_FLOAT_SIZE = { minWidth: 280, minHeight: 44, maxWidth: 520, maxHeight: 1200 };
+    const SCRIPT_VERSION = 'v2.1.0 beta';
   
     const LIMITS = {
       delayMin: 0,
@@ -3770,6 +3775,7 @@
       candidates: [],
       queue: [],
       sentThisRound: new Set(),
+      chatGuessedThisRound: new Set(), // words already said in chat this round (by anyone)
       sentAttempts: new Map(),
       retryMap: new Map(),
       lastGuess: '',
@@ -3804,6 +3810,7 @@
       spamBlockedUntil: 0,
       cooldownRemainingMs: 0,
       spamDetectedCount: 0,
+      spamRecoveryTimer: null,
       closeHitSent: new Set(),
       revealedWords: new Set(),
       devLog: [],
@@ -4504,7 +4511,7 @@
         const n = normalizeWord(word);
         if (!n || n.length < LIMITS.minGuessLength) continue;
         if (!isValidGuessText(n)) continue;
-        if (state.sentThisRound.has(n) || (state.sentAttempts.get(n) || 0) > 0) continue;
+        if (state.sentThisRound.has(n) || state.chatGuessedThisRound.has(n) || (state.sentAttempts.get(n) || 0) > 0) continue;
         if (state.revealedWords.has(n) || queuedSet.has(n)) continue;
         queue.push(n);
         queuedSet.add(n);
@@ -4515,6 +4522,13 @@
   
     function stopAutomation(reason = 'Stopped') {
       state.running = false;
+      if (reason === 'Stopped by user') {
+        state.automationArmed = false;
+        if (state.spamRecoveryTimer) {
+          clearTimeout(state.spamRecoveryTimer);
+          state.spamRecoveryTimer = null;
+        }
+      }
       if (state.loopTimer) {
         clearTimeout(state.loopTimer);
         state.loopTimer = null;
@@ -4799,7 +4813,12 @@
         setStatus('Words still loading...', true);
         return;
       }
-
+      if (Date.now() > state.spamBlockedUntil && (state.spamDetectedCount > 0 || state.spamBlockedUntil > 0)) {
+        state.spamDetectedCount = 0;
+        state.spamBlockedUntil = 0;
+        state.cooldownRemainingMs = 0;
+        if (state.ui && state.ui.cooldown) state.ui.cooldown.textContent = '0s';
+      }
       if (!state.selectors.input) {
         bindGameSelectors();
         if (!state.selectors.input) {
@@ -4840,6 +4859,7 @@
       // scans the current round's messages and won't re-fire on previous rounds.
       state.roundStartChatLen = state.lastChatTextLen;
       state.sentThisRound.clear();
+      state.chatGuessedThisRound.clear();
       // Carry revealed words into sentThisRound so they stay blocked for the new round's queue builds
       state.revealedWords.forEach(w => state.sentThisRound.add(w));
       state.closeHitSent.clear();
@@ -4868,13 +4888,40 @@
       state.spamDetectedCount = 0;
       state.spamBlockedUntil = 0;
       state.cooldownRemainingMs = 0;
+      if (state.spamRecoveryTimer) {
+        clearTimeout(state.spamRecoveryTimer);
+        state.spamRecoveryTimer = null;
+      }
       devLog('round', 'New round started — resetting state');
       resetRoundState('New round');
     }
   
+    function updateChatGuessedWords(fullText) {
+      const text = (fullText || '').slice(state.roundStartChatLen || 0);
+      if (!text.trim()) return false;
+      let changed = false;
+      const lines = text.split(/\r?\n/);
+      for (const line of lines) {
+        const m = line.match(/^\s*[^:]+:\s*(.+)$/);
+        if (!m) continue;
+        let msg = (m[1] || '').trim().replace(/[.,!?]+$/, '');
+        const singleWord = msg.split(/\s+/)[0] || msg;
+        if (singleWord.length >= LIMITS.minGuessLength && /^[a-zA-Z]+$/.test(singleWord)) {
+          const n = normalizeWord(singleWord);
+          if (n && !state.chatGuessedThisRound.has(n)) {
+            state.chatGuessedThisRound.add(n);
+            changed = true;
+          }
+        }
+      }
+      return changed;
+    }
+
     function parseChatSignals(rootText) {
       const fullText = rootText || '';
-  
+
+      if (updateChatGuessedWords(fullText)) renderTopCandidates();
+
       if (fullText.length < state.lastChatTextLen) {
         // Chat was cleared or re-rendered — reset position without reprocessing history
         state.lastChatTextLen = fullText.length;
@@ -4892,8 +4939,26 @@
         // bot can't recover quickly enough to trigger the server kick on the 3rd strike.
         const backoff = Math.min(2000 * (1 << state.spamDetectedCount), 12000); // 4s, 8s, 12s cap
         state.spamBlockedUntil = Date.now() + backoff;
+        if (state.spamRecoveryTimer) {
+          clearTimeout(state.spamRecoveryTimer);
+          state.spamRecoveryTimer = null;
+        }
+        const recoveryBufferMs = 5000; // after cooldown ends, wait this long then re-enable
+        state.spamRecoveryTimer = setTimeout(() => {
+          state.spamRecoveryTimer = null;
+          state.spamDetectedCount = 0;
+          state.spamBlockedUntil = 0;
+          state.cooldownRemainingMs = 0;
+          devLog('round', 'Spam cooldown over — reset; you can start again or auto-resume');
+          setStatus('Spam cooldown over; you can start again.');
+          if (state.ui && state.ui.cooldown) state.ui.cooldown.textContent = '0s';
+          if (state.automationArmed && !state.running) {
+            startAutomation();
+            setStatus('Running (resumed after spam cooldown)');
+          }
+        }, backoff + recoveryBufferMs);
         if (state.spamDetectedCount >= 2) {
-          // Two strikes — stop the automation completely; user can restart manually.
+          // Two strikes — stop the automation; recovery timer will reset state and auto-resume if armed.
           devLog('round', `Spam risk: ${state.spamDetectedCount} detections — stopping to avoid kick`);
           stopAutomation('Spam risk: stopped to avoid kick');
         } else {
@@ -5109,13 +5174,14 @@
     }
 
     function filterCandidates(query) {
+      const alreadyUsed = (w) => state.sentThisRound.has(normalizeWord(w)) || state.chatGuessedThisRound.has(normalizeWord(w));
       if (!query.trim()) {
-        return state.candidates.filter(w => !state.sentThisRound.has(normalizeWord(w))).slice(0, LIMITS.candidatePreview);
+        return state.candidates.filter(w => !alreadyUsed(w)).slice(0, LIMITS.candidatePreview);
       }
       const q = query.toLowerCase();
       return state.candidates.filter(word => {
         const normalized = normalizeWord(word);
-        return word.toLowerCase().includes(q) && !state.sentThisRound.has(normalized);
+        return word.toLowerCase().includes(q) && !state.sentThisRound.has(normalized) && !state.chatGuessedThisRound.has(normalized);
       }).slice(0, LIMITS.candidatePreview);
     }
 
@@ -5149,18 +5215,23 @@
 
     function renderTopCandidatesImmediate(filteredCandidates, keepSearchActive) {
       if (!state.ui?.candidateTop) return;
-      // Never re-render the word list while the bot is stopped — that would
-      // overwrite the "stopped" or "word guessed" placeholder with a fresh
-      // candidate grid every time the hint observer fires.
-      if (!state.running) return;
       if (state.wordGuessedThisRound) {
         hideCandidates();
         return;
       }
+      // Show suggested words even when bot is stopped so the user can click to send guesses.
 
       const candidates = filteredCandidates || filterCandidates('');
       if (!candidates.length) {
         state.ui.candidateTop.innerHTML = '<div style="padding:8px;text-align:center;color:#999;font-size:10px;">No matches</div>';
+        const wrap = state.ui.candidateTop.parentElement;
+        if (wrap && wrap.id === 'sag-candidate-wrap' && typeof fitPanelHeightToContent === 'function') {
+          const minH = 80, maxH = 400;
+          let h = minH;
+          if (settings.candidateAreaHeight != null && settings.candidateAreaHeight > minH) h = Math.min(maxH, settings.candidateAreaHeight);
+          wrap.style.height = h + 'px';
+          requestAnimationFrame(() => fitPanelHeightToContent());
+        }
         return;
       }
   
@@ -5169,7 +5240,7 @@
       
       state.ui.candidateTop.innerHTML = '';
       const container = document.createElement('div');
-      container.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px;height:186px;overflow-y:scroll;padding:6px;border:1px solid #e5e7eb;border-radius:4px;align-content:start;width:100%;box-sizing:border-box;';
+      container.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:6px;height:100%;min-height:80px;overflow-y:scroll;padding:6px;border:1px solid #e5e7eb;border-radius:4px;align-content:start;width:100%;box-sizing:border-box;';
       
       container.addEventListener('scroll', () => {
         state.isUserScrolling = true;
@@ -5259,6 +5330,22 @@
         const ro = new ResizeObserver(() => runFitAfterLayout());
         ro.observe(container);
       }
+
+      const wrap = state.ui.candidateTop.parentElement;
+      if (wrap && wrap.id === 'sag-candidate-wrap' && typeof fitPanelHeightToContent === 'function') {
+        const minH = 80, maxH = 400, minThreeRows = 120;
+        requestAnimationFrame(() => {
+          const prev = container.style.height;
+          container.style.height = 'auto';
+          const contentHeight = container.scrollHeight;
+          container.style.height = prev || '100%';
+          let desired = Math.max(contentHeight, minThreeRows);
+          desired = Math.max(minH, Math.min(maxH, desired));
+          if (settings.candidateAreaHeight != null && settings.candidateAreaHeight > desired) desired = Math.min(maxH, settings.candidateAreaHeight);
+          wrap.style.height = desired + 'px';
+          fitPanelHeightToContent();
+        });
+      }
     }
 
     function attachObservers() {
@@ -5277,6 +5364,8 @@
           parseChatSignals(text);
         });
         state.observers.chat.observe(state.selectors.chat, { childList: true, subtree: true, characterData: true });
+        updateChatGuessedWords(state.selectors.chat.textContent || '');
+        renderTopCandidates();
       }
   
       if (state.selectors.roundRoot) {
@@ -5454,6 +5543,13 @@
           top = startTop + (startH - h);
         }
 
+        // Clamp position so panel stays inside viewport (like main and dev panels)
+        const margin = 8;
+        const maxLeft = Math.max(0, window.innerWidth - w - margin);
+        const maxTop = Math.max(0, window.innerHeight - h - margin);
+        left = Math.max(0, Math.min(left, maxLeft));
+        top = Math.max(0, Math.min(top, maxTop));
+
         panel.style.width = `${w}px`;
         panel.style.height = `${h}px`;
         panel.style.left = `${left}px`;
@@ -5469,10 +5565,13 @@
         window.removeEventListener('mouseup', onUp);
         settings[widthKey] = panel.offsetWidth;
         settings[heightKey] = panel.offsetHeight;
-        // Save position in case a north/west drag moved the panel
+        // Save position in case a north/west drag moved the panel (already clamped in onMove)
         const rect = panel.getBoundingClientRect();
-        settings[xKey] = rect.left;
-        settings[yKey] = rect.top;
+        const margin = 8;
+        const maxLeft = Math.max(0, window.innerWidth - rect.width - margin);
+        const maxTop = Math.max(0, window.innerHeight - rect.height - margin);
+        settings[xKey] = Math.max(0, Math.min(rect.left, maxLeft));
+        settings[yKey] = Math.max(0, Math.min(rect.top, maxTop));
         saveSettings();
       }
 
@@ -5521,7 +5620,7 @@
             : 'auto');
       panel.style.cssText = [
         'position:fixed',
-        'z-index:2147483647',
+        'z-index:2147483646',
         'background:#fff',
         'border:1px solid #d0d7de',
         'border-radius:10px',
@@ -5560,6 +5659,34 @@
         }
         #skribbl-auto-guesser-panel .sag-resize-edge:hover {
           background: rgba(59, 130, 246, 0.15);
+        }
+        #sag-drawer-float .sag-resize-edge {
+          pointer-events: auto;
+        }
+        #sag-drawer-float .sag-resize-edge:hover {
+          background: rgba(59, 130, 246, 0.15);
+        }
+        #sag-drawer-float .sag-drawer-float-body {
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          min-height: 0;
+        }
+        #sag-drawer-float .sag-drawer-block {
+          display: flex;
+          flex-direction: column;
+          flex: 1;
+          min-height: 0;
+        }
+        #sag-drawer-float .sag-drawer-block-header {
+          flex-shrink: 0;
+          background: #f0f9ff;
+          border-bottom: 1px solid #bae6fd;
+        }
+        #sag-drawer-float #sag-drawer {
+          flex: 1;
+          min-height: 0;
+          overflow: auto;
         }
         #skribbl-auto-guesser-panel #sag-search-section {
           width: 100%;
@@ -5657,6 +5784,54 @@
           color: #ffffff !important;
           border-color: #5b21b6 !important;
         }
+        /* Keep Auto-Drawer colors when docked in panel (panel button/label rules override otherwise) */
+        #skribbl-auto-guesser-panel #sag-drawer-block {
+          background: #f8fafc !important;
+          border: 1px solid #cbd5e1 !important;
+        }
+        #skribbl-auto-guesser-panel #sag-drawer-block .sag-drawer-block-header {
+          background: #f0f9ff !important;
+          border-bottom: 1px solid #bae6fd !important;
+        }
+        #skribbl-auto-guesser-panel #sag-drawer-block .sag-drawer-title,
+        #skribbl-auto-guesser-panel #sag-drawer-block .sag-drawer-grip {
+          color: #0369a1 !important;
+        }
+        #skribbl-auto-guesser-panel #sag-drawer {
+          background: #fff !important;
+        }
+        #skribbl-auto-guesser-panel #sag-drawer-process {
+          background: #2563eb !important;
+          color: #ffffff !important;
+          border-color: #1d4ed8 !important;
+        }
+        #skribbl-auto-guesser-panel #sag-drawer-start {
+          background: #16a34a !important;
+          color: #ffffff !important;
+          border-color: #15803d !important;
+        }
+        #skribbl-auto-guesser-panel #sag-drawer-stop {
+          background: #dc2626 !important;
+          color: #ffffff !important;
+          border-color: #b91c1c !important;
+        }
+        #skribbl-auto-guesser-panel #sag-drawer-calibrate {
+          background: #e0e7ff !important;
+          color: #3730a3 !important;
+          border-color: #a5b4fc !important;
+        }
+        #skribbl-auto-guesser-panel #sag-drawer-where-canvas {
+          background: #f1f5f9 !important;
+          color: #475569 !important;
+          border-color: #cbd5e1 !important;
+        }
+        #skribbl-auto-guesser-panel #sag-drawer-block #sag-drawer-density-val,
+        #skribbl-auto-guesser-panel #sag-drawer-block #sag-drawer-bg-val {
+          color: #0369a1 !important;
+        }
+        #skribbl-auto-guesser-panel #sag-drawer-block #sag-drawer-pct {
+          color: #0369a1 !important;
+        }
         #skribbl-auto-guesser-panel #sag-refresh-rate {
           -webkit-appearance: none;
           appearance: none;
@@ -5726,6 +5901,57 @@
           height: 18px;
           border-radius: 50%;
           background: #16a34a;
+          border: none;
+          cursor: pointer;
+        }
+        #skribbl-auto-guesser-panel #sag-drawer-density,
+        #skribbl-auto-guesser-panel #sag-drawer-bg,
+        #sag-drawer-float #sag-drawer-density,
+        #sag-drawer-float #sag-drawer-bg {
+          -webkit-appearance: none;
+          appearance: none;
+          background: transparent;
+          height: 22px;
+        }
+        #skribbl-auto-guesser-panel #sag-drawer-density::-webkit-slider-runnable-track,
+        #skribbl-auto-guesser-panel #sag-drawer-bg::-webkit-slider-runnable-track,
+        #sag-drawer-float #sag-drawer-density::-webkit-slider-runnable-track,
+        #sag-drawer-float #sag-drawer-bg::-webkit-slider-runnable-track {
+          width: 100%;
+          height: 6px;
+          background: #e5e7eb;
+          border-radius: 3px;
+        }
+        #skribbl-auto-guesser-panel #sag-drawer-density::-webkit-slider-thumb,
+        #skribbl-auto-guesser-panel #sag-drawer-bg::-webkit-slider-thumb,
+        #sag-drawer-float #sag-drawer-density::-webkit-slider-thumb,
+        #sag-drawer-float #sag-drawer-bg::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          background: #2563eb;
+          margin-top: -6px;
+          cursor: pointer;
+        }
+        #skribbl-auto-guesser-panel #sag-drawer-density::-moz-range-track,
+        #skribbl-auto-guesser-panel #sag-drawer-bg::-moz-range-track,
+        #sag-drawer-float #sag-drawer-density::-moz-range-track,
+        #sag-drawer-float #sag-drawer-bg::-moz-range-track {
+          width: 100%;
+          height: 6px;
+          background: #e5e7eb;
+          border-radius: 3px;
+        }
+        #skribbl-auto-guesser-panel #sag-drawer-density::-moz-range-thumb,
+        #skribbl-auto-guesser-panel #sag-drawer-bg::-moz-range-thumb,
+        #sag-drawer-float #sag-drawer-density::-moz-range-thumb,
+        #sag-drawer-float #sag-drawer-bg::-moz-range-thumb {
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          background: #2563eb;
           border: none;
           cursor: pointer;
         }
@@ -5813,7 +6039,10 @@
       panel.innerHTML = `
         <div id="sag-header" style="display:flex;align-items:center;justify-content:space-between;cursor:move;gap:8px;margin-bottom:6px;">
           <strong>Skribbl Auto Guesser <span style="font-weight:400;font-size:11px;color:#6b7280;">${SCRIPT_VERSION}</span></strong>
-          <button id="sag-collapse" style="border:1px solid #cbd5e1;background:#f8fafc;border-radius:6px;padding:2px 6px;cursor:pointer;">${settings.collapsed ? '+' : '-'}</button>
+          <span style="display:flex;align-items:center;gap:4px;">
+            <button id="sag-dev-toggle" style="padding:2px 8px;font-size:10px;">Show dev</button>
+            <button id="sag-collapse" style="border:1px solid #cbd5e1;background:#f8fafc;border-radius:6px;padding:2px 6px;cursor:pointer;">${settings.collapsed ? '+' : '\u2212'}</button>
+          </span>
         </div>
         <div id="sag-body" style="display:${settings.collapsed ? 'none' : 'block'};">
           <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
@@ -5841,7 +6070,10 @@
           <div id="sag-search-section" style="margin-bottom:6px;">
             <input id="sag-search-input" type="text" placeholder="Search words (type 1-9 or Enter to send)" />
             <div id="sag-search-hint" style="display:none;">Press 1-9 for first 9 results, Enter for first result</div>
-            <span id="sag-candidate-top">-</span>
+            <div id="sag-candidate-wrap" style="position:relative;height:186px;min-height:80px;max-height:400px;">
+              <div id="sag-candidate-top" style="height:100%;overflow:auto;box-sizing:border-box;">-</div>
+              <div id="sag-candidate-resize" style="position:absolute;bottom:0;left:0;right:0;height:6px;cursor:ns-resize;background:linear-gradient(to top, rgba(0,0,0,0.06), transparent);border-radius:0 0 4px 4px;" title="Drag to resize"></div>
+            </div>
           </div>
 
           <!-- Details toggle -->
@@ -5899,31 +6131,55 @@
               </div>
             </div>
 
-            <!-- Dev Panel toggle -->
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <strong style="font-size:11px;">Developer Panel</strong>
-              <button id="sag-dev-toggle" style="padding:2px 8px;font-size:10px;">Show</button>
-            </div>
           </div>
 
-          <!-- ═══ Auto-Drawer section ═══ -->
-          <button id="sag-drawer-toggle" style="width:100%;padding:3px;font-size:10px;margin-bottom:4px;background:#fef3c7;border:1px solid #fbbf24;border-radius:4px;cursor:pointer;text-align:center;font-weight:600;color:#92400e;">Show Auto-Drawer v</button>
-          <div id="sag-drawer" style="display:none;border:1px solid #fbbf24;border-radius:6px;padding:8px;background:#fffbeb;margin-bottom:4px;">
-            <div style="margin-bottom:6px;">
-              <label style="font-size:11px;font-weight:600;display:block;margin-bottom:3px;">Upload or drag-and-drop image:</label>
-              <input id="sag-drawer-file" type="file" accept="image/*" style="font-size:10px;width:100%;box-sizing:border-box;" />
-              <div style="font-size:9px;color:#92400e;margin-top:2px;">You can also drag an image directly onto this panel.</div>
+          <!-- ═══ Auto-Drawer section (draggable block) ═══ -->
+          <div id="sag-drawer-slot" style="margin-bottom:6px;">
+            <div id="sag-drawer-block" class="sag-drawer-block" style="border:1px solid #cbd5e1;border-radius:8px;overflow:hidden;background:#f8fafc;">
+              <div class="sag-drawer-block-header" style="display:flex;align-items:center;gap:4px;padding:2px 4px 2px 6px;background:#f0f9ff;border-bottom:1px solid #bae6fd;cursor:grab;user-select:none;">
+                <span class="sag-drawer-grip" style="font-size:12px;color:#0369a1;cursor:grab;flex-shrink:0;" title="Drag to move out to the side or back">⋮⋮</span>
+                <span class="sag-drawer-title" style="font-size:11px;font-weight:600;color:#0369a1;flex-shrink:0;">Auto-Drawer</span>
+                <div class="sag-drawer-header-actions" style="display:flex;align-items:center;gap:4px;margin-left:auto;flex-shrink:0;">
+                  <button id="sag-drawer-collapse" type="button" style="border:1px solid #cbd5e1;background:#f8fafc;border-radius:6px;padding:2px 6px;cursor:pointer;flex-shrink:0;min-width:20px;font-size:14px;line-height:1;color:#374151;font-weight:bold;" title="Expand/collapse">+</button>
+                </div>
+              </div>
+              <div id="sag-drawer" style="display:none;border:none;border-top:none;border-radius:0;padding:10px;background:#fff;margin:0;">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+              <button id="sag-drawer-process" style="padding:6px 12px;font-size:11px;background:#2563eb;border:1px solid #1d4ed8;border-radius:6px;cursor:pointer;font-weight:600;color:#fff;" disabled>Process image</button>
+              <button id="sag-drawer-start" style="padding:6px 12px;font-size:11px;background:#16a34a;border:1px solid #15803d;border-radius:6px;cursor:pointer;font-weight:600;color:#fff;" disabled>Start drawing</button>
+              <button id="sag-drawer-stop" style="padding:6px 12px;font-size:11px;background:#dc2626;border:1px solid #b91c1c;border-radius:6px;cursor:pointer;font-weight:600;color:#fff;">Stop</button>
             </div>
-            <canvas id="sag-drawer-preview" width="200" height="150" style="display:none;border:1px solid #e5e7eb;border-radius:4px;margin-bottom:6px;max-width:100%;background:#fff;"></canvas>
-            <div style="font-size:11px;display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;margin-bottom:6px;">
-              <label style="display:flex;flex-direction:column;gap:2px;">
-                <span>Density (1-10):</span>
-                <input id="sag-drawer-density" type="range" min="1" max="10" value="5" style="width:100%;" />
-                <span style="text-align:center;font-size:10px;color:#6b7280;" id="sag-drawer-density-val">5</span>
+            <div style="margin-bottom:8px;">
+              <label style="font-size:11px;font-weight:600;color:#374151;display:block;margin-bottom:4px;">Image</label>
+              <input id="sag-drawer-file" type="file" accept="image/*" style="font-size:10px;width:100%;box-sizing:border-box;padding:4px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;" />
+              <div style="font-size:9px;color:#6b7280;margin-top:3px;">Or drag an image onto this panel.</div>
+            </div>
+            <canvas id="sag-drawer-preview" width="200" height="150" style="display:none;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:8px;max-width:100%;background:#fff;"></canvas>
+            <div style="font-size:10px;color:#6b7280;margin-bottom:8px;padding:6px 8px;background:#f0f9ff;border-radius:4px;border-left:3px solid #0ea5e9;">Process image uses <strong>Density</strong> and <strong>BG removal</strong> below. Change them then click Process again.</div>
+            <div style="margin-bottom:8px;">
+              <label style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;">
+                <span style="font-size:11px;font-weight:600;color:#374151;">Density</span>
+                <span id="sag-drawer-density-val" style="font-size:11px;font-weight:600;color:#0369a1;min-width:20px;text-align:right;">3</span>
               </label>
+              <div class="sag-range-wrap" style="width:100%;box-sizing:border-box;display:flex;justify-content:center;">
+                <input id="sag-drawer-density" type="range" min="1" max="6" value="3" class="sag-range" style="width:calc(100% - 32px);max-width:100%;cursor:pointer;display:block;box-sizing:content-box;" title="1 = fewer points (faster), 6 = most detail" />
+              </div>
+              <div style="font-size:9px;color:#6b7280;margin-top:1px;">1 = less detail · 6 = most detail</div>
+            </div>
+            <div style="margin-bottom:8px;">
+              <label style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;">
+                <span style="font-size:11px;font-weight:600;color:#374151;">BG removal</span>
+                <span id="sag-drawer-bg-val" style="font-size:11px;font-weight:600;color:#0369a1;min-width:24px;text-align:right;">30</span>
+              </label>
+              <div class="sag-range-wrap" style="width:100%;box-sizing:border-box;display:flex;justify-content:center;">
+                <input id="sag-drawer-bg" type="range" min="0" max="120" value="30" class="sag-range" style="width:calc(100% - 32px);max-width:100%;cursor:pointer;display:block;box-sizing:content-box;" title="Remove near-white background (0=off)" />
+              </div>
+              <div style="font-size:9px;color:#6b7280;margin-top:1px;">0 = off · higher = more removal</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;margin-bottom:8px;">
               <label style="display:flex;flex-direction:column;gap:2px;">
-                <span>Brush size:</span>
-                <select id="sag-drawer-brush" style="font-size:10px;padding:2px;">
+                <span style="font-size:11px;font-weight:600;color:#374151;">Brush size</span>
+                <select id="sag-drawer-brush" style="font-size:11px;padding:4px;border:1px solid #d1d5db;border-radius:4px;background:#fff;" title="Applied when drawing starts (if game brush UI is found).">
                   <option value="4">XS (4)</option>
                   <option value="10" selected>S (10)</option>
                   <option value="20">M (20)</option>
@@ -5932,40 +6188,42 @@
                 </select>
               </label>
               <label style="display:flex;flex-direction:column;gap:2px;">
-                <span>BG removal:</span>
-                <input id="sag-drawer-bg" type="range" min="0" max="120" value="30" style="width:100%;" />
-                <span style="text-align:center;font-size:10px;color:#6b7280;" id="sag-drawer-bg-val">30</span>
+                <span style="font-size:11px;font-weight:600;color:#374151;">Max points</span>
+                <input id="sag-drawer-max" type="number" min="0" max="50000" step="100" value="0" style="font-size:11px;width:100%;box-sizing:border-box;padding:4px;border:1px solid #d1d5db;border-radius:4px;" placeholder="0 = no cap" />
               </label>
-              <label style="display:flex;align-items:center;gap:4px;font-size:11px;" title="Include white in palette. Uncheck to skip white (transparent regions only).">
-                <input id="sag-drawer-use-white" type="checkbox" checked />
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px 12px;margin-bottom:8px;">
+              <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#374151;cursor:pointer;" title="Include white in palette.">
+                <input id="sag-drawer-use-white" type="checkbox" checked style="accent-color:#2563eb;" />
                 <span>Use white</span>
               </label>
-              <label style="display:flex;flex-direction:column;gap:2px;">
-                <span>Max points (0=no cap):</span>
-                <input id="sag-drawer-max" type="number" min="0" max="50000" step="100" value="0" style="font-size:10px;width:100%;box-sizing:border-box;padding:2px 4px;" />
-              </label>
-              <label style="display:flex;flex-direction:column;gap:2px;">
-                <span>Chunk size:</span>
-                <input id="sag-drawer-chunk" type="number" min="1" max="500" step="10" value="80" style="font-size:10px;width:100%;box-sizing:border-box;padding:2px 4px;" />
-              </label>
-              <label style="display:flex;flex-direction:column;gap:2px;">
-                <span>Chunk delay (ms):</span>
-                <input id="sag-drawer-delay" type="number" min="0" max="500" step="5" value="10" style="font-size:10px;width:100%;box-sizing:border-box;padding:2px 4px;" />
+              <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#374151;cursor:pointer;" title="Don't draw white (faster on white canvas).">
+                <input id="sag-drawer-skip-draw-white" type="checkbox" checked style="accent-color:#2563eb;" />
+                <span>Skip drawing white</span>
               </label>
             </div>
-            <div id="sag-drawer-stats" style="font-size:10px;color:#6b7280;margin-bottom:6px;">Upload an image to begin.</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;margin-bottom:8px;">
+              <label style="display:flex;flex-direction:column;gap:2px;">
+                <span style="font-size:11px;font-weight:600;color:#374151;">Chunk size</span>
+                <input id="sag-drawer-chunk" type="number" min="1" max="500" step="10" value="80" style="font-size:11px;padding:4px;border:1px solid #d1d5db;border-radius:4px;" />
+              </label>
+              <label style="display:flex;flex-direction:column;gap:2px;">
+                <span style="font-size:11px;font-weight:600;color:#374151;">Chunk delay (ms)</span>
+                <input id="sag-drawer-delay" type="number" min="0" max="500" step="5" value="10" style="font-size:11px;padding:4px;border:1px solid #d1d5db;border-radius:4px;" />
+              </label>
+            </div>
+            <div id="sag-drawer-stats" style="font-size:11px;color:#6b7280;margin-bottom:8px;min-height:1.4em;">Upload an image to begin.</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;">
-              <button id="sag-drawer-process" style="padding:4px 10px;font-size:11px;background:#fbbf24;border:1px solid #f59e0b;border-radius:4px;cursor:pointer;font-weight:600;" disabled>Process image</button>
-              <button id="sag-drawer-start" style="padding:4px 10px;font-size:11px;background:#34d399;border:1px solid #10b981;border-radius:4px;cursor:pointer;font-weight:600;color:#fff;" disabled>Start drawing</button>
-              <button id="sag-drawer-stop" style="padding:4px 10px;font-size:11px;background:#f87171;border:1px solid #ef4444;border-radius:4px;cursor:pointer;font-weight:600;color:#fff;">Stop</button>
-              <button id="sag-drawer-calibrate" style="padding:4px 10px;font-size:11px;background:#a78bfa;border:1px solid #7c3aed;border-radius:4px;cursor:pointer;font-weight:600;color:#fff;" title="Draw 5 test dots (corners + center) to verify socket/mouse path">Calibrate</button>
-              <button id="sag-drawer-where-canvas" style="padding:4px 10px;font-size:11px;background:#94a3b8;border:1px solid #64748b;border-radius:4px;cursor:pointer;font-weight:600;color:#fff;" title="Log all canvases on the page and which one we use">Where is canvas?</button>
+              <button id="sag-drawer-calibrate" style="padding:6px 10px;font-size:10px;background:#e0e7ff;border:1px solid #a5b4fc;border-radius:6px;cursor:pointer;font-weight:600;color:#3730a3;" title="Draw 5 test dots to verify path">Calibrate</button>
+              <button id="sag-drawer-where-canvas" style="padding:6px 10px;font-size:10px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:6px;cursor:pointer;font-weight:600;color:#475569;" title="Log canvases on page">Where is canvas?</button>
             </div>
-            <div id="sag-drawer-progress" style="display:none;margin-top:6px;">
-              <div style="background:#e5e7eb;border-radius:4px;height:8px;overflow:hidden;">
-                <div id="sag-drawer-bar" style="background:#fbbf24;height:100%;width:0%;transition:width 0.15s;"></div>
+            <div id="sag-drawer-progress" style="display:none;margin-top:8px;">
+              <div style="background:#e5e7eb;border-radius:6px;height:10px;overflow:hidden;">
+                <div id="sag-drawer-bar" style="background:linear-gradient(90deg,#34d399,#10b981);height:100%;width:0%;transition:width 0.15s;"></div>
               </div>
-              <div id="sag-drawer-pct" style="font-size:10px;text-align:center;color:#92400e;margin-top:2px;">0%</div>
+              <div id="sag-drawer-pct" style="font-size:11px;text-align:center;color:#0369a1;margin-top:4px;font-weight:600;">0%</div>
+            </div>
+              </div>
             </div>
           </div>
 
@@ -6002,12 +6260,12 @@
         'padding:8px',
         'box-sizing:border-box',
         'display:none',
-        'flex-direction:column',
         'flex',
+        'flex-direction:column',
       ].join(';');
 
       devPanel.innerHTML = `
-        <div id="sag-dev-content" style="flex:1;min-height:0;overflow:auto;">
+        <div id="sag-dev-content" style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;">
           <div id="sag-dev-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;cursor:move;user-select:none;">
             <strong style="font-size:12px;">🛠 Developer Panel</strong>
             <button id="sag-dev-close" style="padding:2px 7px;font-size:11px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:5px;cursor:pointer;">✕</button>
@@ -6025,8 +6283,16 @@
             <button id="sag-dev-copy-log" style="padding:3px 8px;font-size:10px;">Copy log</button>
           </div>
           <div id="sag-dev-snap-out" style="display:none;font-size:9px;font-family:monospace;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:4px;padding:6px;margin-bottom:6px;max-height:80px;overflow-y:auto;word-break:break-all;white-space:pre-wrap;"></div>
-          <div style="font-size:10px;font-weight:700;color:#374151;margin-bottom:3px;">Bot log</div>
-          <div id="sag-dev-log" style="height:280px;overflow-y:auto;background:#f9fafb;border:1px solid #e5e7eb;border-radius:4px;padding:4px 6px;font-family:monospace;"></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px;">
+            <span style="font-size:10px;font-weight:700;color:#374151;">Bot log</span>
+            <span style="display:flex;align-items:center;gap:2px;">
+              <button type="button" id="sag-dev-log-font-minus" style="width:22px;height:22px;padding:0;font-size:14px;line-height:1;border:1px solid #cbd5e1;border-radius:4px;background:#f8fafc;cursor:pointer;">−</button>
+              <button type="button" id="sag-dev-log-font-plus" style="width:22px;height:22px;padding:0;font-size:14px;line-height:1;border:1px solid #cbd5e1;border-radius:4px;background:#f8fafc;cursor:pointer;">+</button>
+            </span>
+          </div>
+          <div id="sag-dev-log-wrap" style="flex:1;min-height:80px;position:relative;display:flex;flex-direction:column;">
+            <div id="sag-dev-log" style="flex:1;min-height:0;overflow-y:auto;background:#f9fafb;border:1px solid #e5e7eb;border-radius:4px;padding:4px 6px;font-family:monospace;font-size:11px;display:block;"></div>
+          </div>
         </div>
         <div id="sag-dev-resize-n"  class="sag-resize-edge" style="position:absolute;top:0;left:8px;right:8px;height:6px;cursor:ns-resize;z-index:10;"></div>
         <div id="sag-dev-resize-s"  class="sag-resize-edge" style="position:absolute;bottom:0;left:8px;right:8px;height:6px;cursor:ns-resize;z-index:10;"></div>
@@ -6121,11 +6387,7 @@
           panel.style.height = COLLAPSED_PANEL_HEIGHT + 'px';
           panel.style.minHeight = COLLAPSED_PANEL_HEIGHT + 'px';
         } else {
-          const restored = Math.max(PANEL_SIZE.minHeight, Math.min(PANEL_SIZE.maxHeight || 1200, settings.panelHeight || 400));
-          panel.style.height = restored + 'px';
-          panel.style.minHeight = PANEL_SIZE.minHeight + 'px';
-          settings.panelHeight = restored;
-          saveSettings();
+          fitPanelHeightToContent();
         }
         saveSettings();
       });
@@ -6156,6 +6418,38 @@
         saveSettings();
         fitPanelHeightToContent();
       });
+
+      (function initCandidateAreaResize() {
+        const wrap = panel.querySelector('#sag-candidate-wrap');
+        const resizeHandle = panel.querySelector('#sag-candidate-resize');
+        if (!wrap || !resizeHandle) return;
+        const minH = 80, maxH = 400;
+        let startY = 0, startHeight = 0;
+        if (settings.candidateAreaHeight != null) {
+          const h = Math.max(minH, Math.min(maxH, settings.candidateAreaHeight));
+          wrap.style.height = h + 'px';
+        }
+        resizeHandle.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          startY = e.clientY;
+          startHeight = wrap.offsetHeight;
+          document.addEventListener('mousemove', onResizeMove);
+          document.addEventListener('mouseup', onResizeUp);
+        });
+        function onResizeMove(e) {
+          const dy = e.clientY - startY;
+          let h = Math.max(minH, Math.min(maxH, startHeight + dy));
+          wrap.style.height = h + 'px';
+          settings.candidateAreaHeight = h;
+          saveSettings();
+          fitPanelHeightToContent();
+        }
+        function onResizeUp() {
+          document.removeEventListener('mousemove', onResizeMove);
+          document.removeEventListener('mouseup', onResizeUp);
+          fitPanelHeightToContent();
+        }
+      })();
   
       dotToggle.addEventListener('change', () => {
         settings.dotPrefix = Boolean(dotToggle.checked);
@@ -6352,10 +6646,54 @@
         navigator.clipboard?.writeText(text).then(() => devLog('info', 'Log copied to clipboard'));
       });
 
+      (function initLogResizeAndFont() {
+        const logEl = devPanel.querySelector('#sag-dev-log');
+        const logWrap = devPanel.querySelector('#sag-dev-log-wrap');
+        const btnMinus = devPanel.querySelector('#sag-dev-log-font-minus');
+        const btnPlus = devPanel.querySelector('#sag-dev-log-font-plus');
+        if (!logEl) return;
+        let logFontSizePx = (settings.devLogFontSize != null ? settings.devLogFontSize : 11);
+        const minLogFont = 9, maxLogFont = 18;
+
+        function applyLogFontSize() {
+          logEl.style.fontSize = logFontSizePx + 'px';
+          saveSettings();
+          fitDevPanelToContent();
+        }
+
+        function fitDevPanelToContent() {
+          requestAnimationFrame(() => {
+            const content = devPanel.querySelector('#sag-dev-content');
+            if (!content) return;
+            const total = content.scrollHeight + 24;
+            const maxH = Math.min(DEV_PANEL_SIZE.maxHeight || 900, window.innerHeight - 40);
+            const h = Math.max(DEV_PANEL_SIZE.minHeight || 200, Math.min(maxH, total));
+            devPanel.style.height = h + 'px';
+            if (settings.devPanelHeight != null) settings.devPanelHeight = h;
+            saveSettings();
+          });
+        }
+
+        if (btnMinus) btnMinus.addEventListener('click', () => {
+          logFontSizePx = Math.max(minLogFont, logFontSizePx - 1);
+          settings.devLogFontSize = logFontSizePx;
+          applyLogFontSize();
+        });
+        if (btnPlus) btnPlus.addEventListener('click', () => {
+          logFontSizePx = Math.min(maxLogFont, logFontSizePx + 1);
+          settings.devLogFontSize = logFontSizePx;
+          applyLogFontSize();
+        });
+        // Do not observe log resize: resizing the log would auto-grow the dev panel; user controls panel size via edges only
+      })();
+
       // ═══ Auto-Drawer event wiring ═══════════════════════════════════════
       const drawer = window.__skribblDrawer;
+      const drawerSlot = panel.querySelector('#sag-drawer-slot');
+      const drawerBlock = panel.querySelector('#sag-drawer-block');
       const drawerSection = panel.querySelector('#sag-drawer');
-      const drawerToggle = panel.querySelector('#sag-drawer-toggle');
+      const drawerCollapse = panel.querySelector('#sag-drawer-collapse');
+      const drawerGrip = panel.querySelector('.sag-drawer-grip');
       const drawerFile = panel.querySelector('#sag-drawer-file');
       const drawerPreview = panel.querySelector('#sag-drawer-preview');
       const drawerDensity = panel.querySelector('#sag-drawer-density');
@@ -6364,6 +6702,7 @@
       const drawerBg = panel.querySelector('#sag-drawer-bg');
       const drawerBgVal = panel.querySelector('#sag-drawer-bg-val');
       const drawerUseWhite = panel.querySelector('#sag-drawer-use-white');
+      const drawerSkipDrawWhite = panel.querySelector('#sag-drawer-skip-draw-white');
       const drawerMax = panel.querySelector('#sag-drawer-max');
       const drawerChunk = panel.querySelector('#sag-drawer-chunk');
       const drawerDelay = panel.querySelector('#sag-drawer-delay');
@@ -6379,6 +6718,7 @@
 
       let drawerLoadedImg = null;
       let drawerProcessedPoints = null;
+      let drawerProcessedCanvas = null;
 
       function loadDrawerImage(file) {
         if (!file || !file.type.startsWith('image/')) return;
@@ -6386,6 +6726,7 @@
         img.onload = () => {
           drawerLoadedImg = img;
           drawerProcessedPoints = null;
+          drawerProcessedCanvas = null;
           drawerProcessBtn.disabled = false;
           drawerStartBtn.disabled = true;
           const preCtx = drawerPreview.getContext('2d');
@@ -6400,11 +6741,32 @@
         img.src = URL.createObjectURL(file);
       }
 
-      if (drawerToggle) {
-        drawerToggle.addEventListener('click', () => {
+      if (drawerCollapse) {
+        drawerCollapse.addEventListener('click', (e) => {
+          e.stopPropagation();
           const open = drawerSection.style.display === 'none';
           drawerSection.style.display = open ? 'block' : 'none';
-          drawerToggle.textContent = open ? 'Hide Auto-Drawer ^' : 'Show Auto-Drawer v';
+          drawerCollapse.textContent = open ? '\u2212' : '+';
+          if (drawerBlock && drawerSlot && drawerBlock.parentElement === drawerSlot && typeof fitPanelHeightToContent === 'function') fitPanelHeightToContent();
+          // When floating, resize the float: collapsed = header-only height, expanded = restore saved height
+          if (drawerBlock) {
+            const wrap = drawerBlock.closest('#sag-drawer-float');
+            if (wrap) {
+              if (open) {
+                // Expanding: restore saved expanded height (or default)
+                const defaultH = 480, minContentH = 320;
+                const maxH = Math.min(DRAWER_FLOAT_SIZE.maxHeight, Math.floor(window.innerHeight * 0.85));
+                const h = Math.max(minContentH, Math.min(maxH, settings.drawerFloatHeight && settings.drawerFloatHeight >= minContentH ? settings.drawerFloatHeight : defaultH));
+                wrap.style.height = h + 'px';
+              } else {
+                // Collapsing: save current height for next expand, then shrink to header-only
+                const currentH = wrap.offsetHeight;
+                if (currentH >= 320) settings.drawerFloatHeight = currentH;
+                wrap.style.height = DRAWER_FLOAT_SIZE.minHeight + 'px';
+                saveSettings();
+              }
+            }
+          }
           if (open && drawer) {
             drawerStats.textContent = 'Checking draw methods...';
             (async () => {
@@ -6426,8 +6788,320 @@
         });
       }
 
+      (function initDrawerBlockDrag() {
+        let floatContainer = null;
+        let placeholderEl = null;
+        let dragStartX = 0, dragStartY = 0, floatStartX = 0, floatStartY = 0;
+        let isDragging = false, isFloating = false;
+        let dragOffsetX = 0, dragOffsetY = 0;
+        let dragPlaceholder = null;
+
+        function getPanelRect() {
+          return panel.getBoundingClientRect();
+        }
+
+        function isBlockDocked() {
+          return drawerBlock && drawerSlot && drawerBlock.parentElement === drawerSlot;
+        }
+
+        let floatDragListener = null;
+
+        const DRAWER_FLOAT_DEFAULT_HEIGHT = 480; // tall enough to show all controls without scrolling
+        const DRAWER_FLOAT_MIN_CONTENT_HEIGHT = 320; // never restore a tiny collapsed height
+
+        function createFloatContainer() {
+          if (floatContainer) return floatContainer;
+          const wrap = document.createElement('div');
+          wrap.id = 'sag-drawer-float';
+          const maxH = Math.min(DRAWER_FLOAT_SIZE.maxHeight, Math.floor(window.innerHeight * 0.85));
+          const w = Math.max(DRAWER_FLOAT_SIZE.minWidth, Math.min(DRAWER_FLOAT_SIZE.maxWidth, settings.drawerFloatWidth || 320));
+          const savedH = settings.drawerFloatHeight;
+          const h = Math.max(DRAWER_FLOAT_MIN_CONTENT_HEIGHT, Math.min(maxH, savedH && savedH >= DRAWER_FLOAT_MIN_CONTENT_HEIGHT ? savedH : DRAWER_FLOAT_DEFAULT_HEIGHT));
+          wrap.style.cssText = 'position:fixed;z-index:2147483647;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.12);overflow:hidden;background:#fff;display:flex;flex-direction:column;';
+          wrap.style.width = w + 'px';
+          wrap.style.height = h + 'px';
+          wrap.style.minWidth = DRAWER_FLOAT_SIZE.minWidth + 'px';
+          wrap.style.maxWidth = DRAWER_FLOAT_SIZE.maxWidth + 'px';
+          wrap.style.minHeight = DRAWER_FLOAT_SIZE.minHeight + 'px';
+          wrap.style.maxHeight = maxH + 'px';
+          const body = document.createElement('div');
+          body.className = 'sag-drawer-float-body';
+          body.style.cssText = 'overflow:hidden;min-height:0;flex:1;display:flex;flex-direction:column;';
+          wrap.appendChild(body);
+          // Resize edges: sides + bottom + corners only. Full top = draggable (like main + dev panels).
+          const edge = (id, style) => {
+            const d = document.createElement('div');
+            d.id = id;
+            d.className = 'sag-resize-edge';
+            d.style.cssText = style;
+            return d;
+          };
+          wrap.appendChild(edge('sag-float-resize-s',  'position:absolute;bottom:0;left:8px;right:8px;height:6px;cursor:ns-resize;z-index:10;'));
+          wrap.appendChild(edge('sag-float-resize-e',  'position:absolute;top:8px;right:0;bottom:8px;width:6px;cursor:ew-resize;z-index:10;'));
+          wrap.appendChild(edge('sag-float-resize-w',  'position:absolute;top:8px;left:0;bottom:8px;width:6px;cursor:ew-resize;z-index:10;'));
+          wrap.appendChild(edge('sag-float-resize-nw', 'position:absolute;top:0;left:0;width:12px;height:12px;cursor:nwse-resize;z-index:11;'));
+          wrap.appendChild(edge('sag-float-resize-ne', 'position:absolute;top:0;right:0;width:12px;height:12px;cursor:nesw-resize;z-index:11;'));
+          wrap.appendChild(edge('sag-float-resize-sw', 'position:absolute;bottom:0;left:0;width:12px;height:12px;cursor:nesw-resize;z-index:11;'));
+          wrap.appendChild(edge('sag-float-resize-se', 'position:absolute;bottom:0;right:0;width:12px;height:12px;cursor:nwse-resize;z-index:11;'));
+          makeResizable(wrap, [
+            { el: wrap.querySelector('#sag-float-resize-s'),  dir: 's' },
+            { el: wrap.querySelector('#sag-float-resize-e'),  dir: 'e' },
+            { el: wrap.querySelector('#sag-float-resize-w'),  dir: 'w' },
+            { el: wrap.querySelector('#sag-float-resize-nw'), dir: 'nw' },
+            { el: wrap.querySelector('#sag-float-resize-ne'), dir: 'ne' },
+            { el: wrap.querySelector('#sag-float-resize-sw'), dir: 'sw' },
+            { el: wrap.querySelector('#sag-float-resize-se'), dir: 'se' },
+          ], null, {
+            widthKey: 'drawerFloatWidth',
+            heightKey: 'drawerFloatHeight',
+            xKey: 'drawerFloatX',
+            yKey: 'drawerFloatY',
+            limits: DRAWER_FLOAT_SIZE,
+          });
+          floatContainer = { el: wrap, body };
+          return floatContainer;
+        }
+
+        function addDockBackToBlockHeader() {
+          const hdr = drawerBlock && drawerBlock.querySelector('.sag-drawer-block-header');
+          if (!hdr || hdr.querySelector('.sag-drawer-dock-back')) return;
+          const actionsWrap = hdr.querySelector('.sag-drawer-header-actions');
+          const collapseEl = hdr.querySelector('#sag-drawer-collapse');
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'sag-drawer-dock-back';
+          btn.style.cssText = 'padding:2px 8px;font-size:10px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600;flex-shrink:0;';
+          btn.textContent = 'Dock back';
+          btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); dock(); });
+          (actionsWrap || hdr).insertBefore(btn, collapseEl || (actionsWrap && actionsWrap.firstChild));
+          floatDragListener = (e) => {
+            if (e.target === drawerCollapse || e.target.closest('.sag-drawer-dock-back')) return;
+            e.preventDefault();
+            startFloatDrag(e);
+          };
+          hdr.addEventListener('mousedown', floatDragListener);
+        }
+
+        function removeDockBackFromBlockHeader() {
+          const hdr = drawerBlock && drawerBlock.querySelector('.sag-drawer-block-header');
+          if (!hdr) return;
+          const btn = hdr.querySelector('.sag-drawer-dock-back');
+          if (btn) btn.remove();
+          if (floatDragListener) {
+            hdr.removeEventListener('mousedown', floatDragListener);
+            floatDragListener = null;
+          }
+        }
+
+        function startFloatDrag(e) {
+          if (!floatContainer || !floatContainer.el.parentElement) return;
+          dragStartX = e.clientX;
+          dragStartY = e.clientY;
+          const r = floatContainer.el.getBoundingClientRect();
+          floatStartX = r.left;
+          floatStartY = r.top;
+          isDragging = true;
+          floatContainer.el.style.cursor = 'grabbing';
+          document.addEventListener('mousemove', onFloatMove);
+          document.addEventListener('mouseup', onFloatUp);
+        }
+
+        function onFloatMove(e) {
+          if (!isDragging || !floatContainer) return;
+          const dx = e.clientX - dragStartX, dy = e.clientY - dragStartY;
+          const w = floatContainer.el.offsetWidth;
+          const h = floatContainer.el.offsetHeight;
+          const margin = 8;
+          const maxLeft = Math.max(0, window.innerWidth - w - margin);
+          const maxTop = Math.max(0, window.innerHeight - h - margin);
+          let left = Math.max(0, Math.min(floatStartX + dx, maxLeft));
+          let top = Math.max(0, Math.min(floatStartY + dy, maxTop));
+          floatContainer.el.style.left = left + 'px';
+          floatContainer.el.style.top = top + 'px';
+        }
+
+        function onFloatUp(e) {
+          document.removeEventListener('mousemove', onFloatMove);
+          document.removeEventListener('mouseup', onFloatUp);
+          if (floatContainer) floatContainer.el.style.cursor = '';
+          if (isFloating && floatContainer && floatContainer.el.parentElement) {
+            const r = floatContainer.el.getBoundingClientRect();
+            const margin = 8;
+            const maxLeft = Math.max(0, window.innerWidth - r.width - margin);
+            const maxTop = Math.max(0, window.innerHeight - r.height - margin);
+            settings.drawerFloatX = Math.max(0, Math.min(r.left, maxLeft));
+            settings.drawerFloatY = Math.max(0, Math.min(r.top, maxTop));
+            saveSettings();
+          }
+          if (isDragging && e && isFloating) {
+            const panelRect = getPanelRect();
+            const margin = 30;
+            const inDockZone = e.clientX >= panelRect.left - margin && e.clientX <= panelRect.right + margin && e.clientY >= panelRect.top - margin && e.clientY <= panelRect.bottom + margin;
+            if (inDockZone) dock();
+          }
+          isDragging = false;
+        }
+
+        function undock(clientX, clientY) {
+          if (!drawerBlock || !drawerSlot) return;
+          const fc = createFloatContainer();
+          const panelRect = getPanelRect();
+          const fw = parseInt(fc.el.style.width, 10) || 320;
+          const fh = parseInt(fc.el.style.height, 10) || DRAWER_FLOAT_DEFAULT_HEIGHT;
+          // Always use drop position so the window goes where the user released the mouse
+          let left = clientX - 20;
+          let top = clientY - 10;
+          left = Math.max(8, Math.min(left, window.innerWidth - fw - 8));
+          top = Math.max(8, Math.min(top, window.innerHeight - fh - 8));
+          // Only if that would sit on top of the main panel, nudge to the left of the panel
+          const margin = 16;
+          const overlapX = left < panelRect.right + margin && left + fw > panelRect.left - margin;
+          const overlapY = top < panelRect.bottom + margin && top + fh > panelRect.top - margin;
+          if (overlapX && overlapY) {
+            left = Math.max(8, panelRect.left - fw - margin);
+            top = Math.max(8, Math.min(panelRect.top, window.innerHeight - fh - 8));
+          }
+          fc.el.style.left = left + 'px';
+          fc.el.style.top = top + 'px';
+          // Append float to body first so it has correct size before we move the block in
+          if (!fc.el.parentElement) document.body.appendChild(fc.el);
+          fc.body.appendChild(drawerBlock);
+          drawerBlock.setAttribute('style', savedBlockStyle || '');
+          if (drawerSection) drawerSection.style.display = savedExpandedOnDragStart ? 'block' : 'none';
+          if (drawerCollapse) drawerCollapse.textContent = savedExpandedOnDragStart ? '\u2212' : '+';
+          addDockBackToBlockHeader();
+          placeholderEl = document.createElement('div');
+          placeholderEl.className = 'sag-drawer-placeholder';
+          placeholderEl.style.cssText = 'padding:8px 10px;border:1px dashed #94a3b8;border-radius:8px;background:#f8fafc;font-size:11px;color:#475569;text-align:center;';
+          placeholderEl.innerHTML = 'Auto-Drawer is to the side. <button type="button" style="margin-left:6px;padding:2px 8px;font-size:10px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:600;">Dock back</button>';
+          placeholderEl.querySelector('button').addEventListener('click', dock);
+          drawerSlot.appendChild(placeholderEl);
+          isFloating = true;
+        }
+
+        function dock() {
+          if (!drawerBlock || !drawerSlot || !floatContainer) return;
+          removeDockBackFromBlockHeader();
+          // Save current float size/position so next undock keeps them (skip height if collapsed)
+          const r = floatContainer.el.getBoundingClientRect();
+          settings.drawerFloatWidth = Math.round(r.width);
+          if (r.height >= DRAWER_FLOAT_MIN_CONTENT_HEIGHT) settings.drawerFloatHeight = Math.round(r.height);
+          settings.drawerFloatX = Math.round(r.left);
+          settings.drawerFloatY = Math.round(r.top);
+          saveSettings();
+          if (placeholderEl && placeholderEl.parentElement) placeholderEl.remove();
+          placeholderEl = null;
+          floatContainer.body.removeChild(drawerBlock);
+          drawerSlot.insertBefore(drawerBlock, drawerSlot.firstChild);
+          if (floatContainer.el.parentElement) floatContainer.el.remove();
+          isFloating = false;
+          if (typeof fitPanelHeightToContent === 'function') requestAnimationFrame(() => fitPanelHeightToContent());
+        }
+
+        let savedBlockStyle = '';
+        let savedExpandedOnDragStart = true;
+        let lastInDockZone = true;
+
+        function startDockedDrag(e) {
+          if (!isBlockDocked() || !drawerBlock || !drawerSlot) return;
+          const rect = drawerBlock.getBoundingClientRect();
+          const w = Math.max(rect.width, 280);
+          const h = Math.max(rect.height, 120);
+          savedBlockStyle = drawerBlock.getAttribute('style') || '';
+          savedExpandedOnDragStart = drawerSection && drawerSection.style.display !== 'none';
+          lastInDockZone = true;
+          dragOffsetX = e.clientX - rect.left;
+          dragOffsetY = e.clientY - rect.top;
+          isDragging = true;
+          dragPlaceholder = document.createElement('div');
+          dragPlaceholder.style.cssText = 'min-height:44px;height:44px;border:1px dashed #cbd5e1;border-radius:8px;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:10px;color:#64748b;';
+          dragPlaceholder.textContent = 'Auto-Drawer (dragging…)';
+          drawerSlot.insertBefore(dragPlaceholder, drawerBlock);
+          drawerBlock.parentElement.removeChild(drawerBlock);
+          drawerBlock.style.cssText = 'position:fixed!important;left:' + rect.left + 'px;top:' + rect.top + 'px;width:' + w + 'px;min-width:' + w + 'px;height:' + h + 'px;min-height:' + h + 'px;z-index:2147483647;margin:0!important;box-shadow:0 12px 28px rgba(0,0,0,0.2);border-radius:8px;transition:none;box-sizing:border-box;overflow:hidden;';
+          document.body.appendChild(drawerBlock);
+          document.body.style.cursor = 'grabbing';
+          document.body.style.userSelect = 'none';
+          document.addEventListener('mousemove', onDockedMove);
+          document.addEventListener('mouseup', onDockedUp);
+        }
+
+        function onDockedUp(e) {
+          document.removeEventListener('mousemove', onDockedMove);
+          document.removeEventListener('mouseup', onDockedUp);
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+          if (!isDragging || !drawerBlock) return;
+          isDragging = false;
+          const panelRect = getPanelRect();
+          const margin = 30;
+          const outside = e.clientX < panelRect.left - margin || e.clientX > panelRect.right + margin || e.clientY < panelRect.top - margin || e.clientY > panelRect.bottom + margin;
+          if (dragPlaceholder && dragPlaceholder.parentElement) dragPlaceholder.remove();
+          dragPlaceholder = null;
+          if (drawerBlock.parentElement) drawerBlock.parentElement.removeChild(drawerBlock);
+          if (outside) {
+            undock(e.clientX, e.clientY);
+          } else {
+            drawerBlock.setAttribute('style', savedBlockStyle);
+            drawerSlot.insertBefore(drawerBlock, drawerSlot.firstChild);
+          }
+        }
+
+        const DOCK_ZONE_MARGIN = 24;
+
+        function updateBlockHeightAfterExpandCollapse() {
+          requestAnimationFrame(() => {
+            const newH = Math.max(120, drawerBlock.scrollHeight);
+            drawerBlock.style.height = newH + 'px';
+            drawerBlock.style.minHeight = newH + 'px';
+          });
+        }
+
+        function onDockedMove(e) {
+          if (!drawerBlock || !drawerBlock.parentElement) return;
+          const panelRect = getPanelRect();
+          const inDockZone = e.clientX >= panelRect.left - DOCK_ZONE_MARGIN && e.clientX <= panelRect.right + DOCK_ZONE_MARGIN && e.clientY >= panelRect.top - DOCK_ZONE_MARGIN && e.clientY <= panelRect.bottom + DOCK_ZONE_MARGIN;
+          if (!inDockZone && lastInDockZone) {
+            if (typeof fitPanelHeightToContent === 'function') fitPanelHeightToContent();
+            if (dragPlaceholder) dragPlaceholder.style.minHeight = '44px';
+          }
+          if (inDockZone && !lastInDockZone) {
+            if (dragPlaceholder) dragPlaceholder.style.minHeight = '280px';
+            if (typeof fitPanelHeightToContent === 'function') fitPanelHeightToContent();
+          }
+          lastInDockZone = inDockZone;
+          const isExpanded = drawerSection && drawerSection.style.display !== 'none';
+          if (inDockZone && !isExpanded) {
+            if (drawerSection) drawerSection.style.display = 'block';
+            if (drawerCollapse) drawerCollapse.textContent = '\u2212';
+            updateBlockHeightAfterExpandCollapse();
+          } else if (!inDockZone && isExpanded) {
+            if (drawerSection) drawerSection.style.display = 'none';
+            if (drawerCollapse) drawerCollapse.textContent = '+';
+            updateBlockHeightAfterExpandCollapse();
+          }
+          let left = e.clientX - dragOffsetX;
+          let top = e.clientY - dragOffsetY;
+          const w = Math.max(280, parseFloat(drawerBlock.style.width) || drawerBlock.getBoundingClientRect().width);
+          left = Math.max(4, Math.min(left, window.innerWidth - w - 4));
+          top = Math.max(4, Math.min(top, window.innerHeight - 80));
+          drawerBlock.style.left = left + 'px';
+          drawerBlock.style.top = top + 'px';
+        }
+
+        const blockHeader = panel.querySelector('.sag-drawer-block-header');
+        if (blockHeader) {
+          blockHeader.addEventListener('mousedown', (e) => {
+            if (e.target === drawerCollapse || e.target.closest('.sag-drawer-dock-back')) return;
+            e.preventDefault();
+            if (isBlockDocked()) startDockedDrag(e);
+          });
+        }
+      })();
+
       function invalidateProcessed(reason) {
         drawerProcessedPoints = null;
+        drawerProcessedCanvas = null;
         if (drawerStartBtn) drawerStartBtn.disabled = true;
         if (drawerStats) drawerStats.textContent = reason || 'Click Process image to apply.';
       }
@@ -6455,6 +7129,15 @@
           invalidateProcessed('White palette changed. Click Process image to apply.');
         });
       }
+      const drawerSkipWhite = panel.querySelector('#sag-drawer-skip-draw-white');
+      if (drawerSkipWhite) {
+        drawerSkipWhite.addEventListener('change', () => {
+          invalidateProcessed('Skip drawing white changed. Click Process image to apply.');
+        });
+      }
+      // Sync initial slider value displays
+      if (drawerDensityVal && drawerDensity) drawerDensityVal.textContent = drawerDensity.value;
+      if (drawerBgVal && drawerBg) drawerBgVal.textContent = drawerBg.value;
 
       // File input
       if (drawerFile) {
@@ -6503,15 +7186,18 @@
           const maxPts = parseInt(drawerMax.value) || 0;
 
           const useWhite = drawerUseWhite ? drawerUseWhite.checked : true;
+          const skipDrawWhite = drawerSkipDrawWhite ? drawerSkipDrawWhite.checked : true;
 
           const result = drawer.processImage(drawerLoadedImg, {
             bgThreshold,
             density,
             maxPoints: maxPts,
             useWhite,
+            skipDrawWhite,
           });
 
           drawerProcessedPoints = result.points;
+          drawerProcessedCanvas = result.canvas;
           drawerStartBtn.disabled = false;
 
           // Show processed preview
@@ -6523,7 +7209,7 @@
           preCtx.drawImage(result.canvas, ox, oy, pw, ph);
 
           updateDrawerEstimate();
-          devLog('info', `Drawer: processed ${result.points.length} points (density=${density}, bg=${bgThreshold})`);
+          devLog('info', `Drawer: processed ${result.points.length} points (density=${density}, bg=${bgThreshold}${result.contrastBoosted ? ', contrast boosted' : ''})`);
         });
       }
 
@@ -6545,6 +7231,7 @@
             chunkSize: chunk,
             chunkDelayMs: delay,
             brushSize,
+            processedCanvas: drawerProcessedCanvas,
             log: (msg) => devLog('info', 'Drawer: ' + msg),
             onMethod: (method) => {
               drawerStats.textContent = `Drawing via ${method}...`;

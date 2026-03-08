@@ -75,74 +75,84 @@ async function dispatchClick(tabId, x, y) {
   });
 }
 
-// Handle messages from content scripts
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (!sender.tab) return false;
-  const tabId = sender.tab.id;
+// Handle messages from content scripts (guard for extension context)
+if (typeof chrome !== 'undefined' && chrome.runtime) {
+  // Keep-alive port: content script opens this during CDP drawing so the service worker
+  // is not terminated mid-draw (MV3 service workers go inactive when idle).
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name === 'drawKeepAlive') {
+      port.onDisconnect.addListener(() => {});
+    }
+  });
 
-  if (msg.action === 'debuggerAttach') {
-    ensureAttached(tabId)
-      .then(() => sendResponse({ ok: true }))
-      .catch(e => sendResponse({ ok: false, error: e.message }));
-    return true;
-  }
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (!sender.tab) return false;
+    const tabId = sender.tab.id;
 
-  if (msg.action === 'debuggerDetach') {
-    detachTab(tabId)
-      .then(() => sendResponse({ ok: true }))
-      .catch(e => sendResponse({ ok: false, error: e.message }));
-    return true;
-  }
+    if (msg.action === 'debuggerAttach') {
+      ensureAttached(tabId)
+        .then(() => sendResponse({ ok: true }))
+        .catch(e => sendResponse({ ok: false, error: e.message }));
+      return true;
+    }
 
-  if (msg.action === 'drawDot') {
-    ensureAttached(tabId)
-      .then(() => dispatchDot(tabId, msg.x, msg.y))
-      .then(() => sendResponse({ ok: true }))
-      .catch(e => sendResponse({ ok: false, error: e.message }));
-    return true;
-  }
+    if (msg.action === 'debuggerDetach') {
+      detachTab(tabId)
+        .then(() => sendResponse({ ok: true }))
+        .catch(e => sendResponse({ ok: false, error: e.message }));
+      return true;
+    }
 
-  if (msg.action === 'drawDots') {
-    (async () => {
-      try {
-        await ensureAttached(tabId);
-        const pts = msg.points; // [[x,y], [x,y], ...]
-        for (let i = 0; i < pts.length; i++) {
-          await dispatchDot(tabId, pts[i][0], pts[i][1]);
+    if (msg.action === 'drawDot') {
+      ensureAttached(tabId)
+        .then(() => dispatchDot(tabId, msg.x, msg.y))
+        .then(() => sendResponse({ ok: true }))
+        .catch(e => sendResponse({ ok: false, error: e.message }));
+      return true;
+    }
+
+    if (msg.action === 'drawDots') {
+      (async () => {
+        try {
+          await ensureAttached(tabId);
+          const pts = msg.points; // [[x,y], [x,y], ...]
+          for (let i = 0; i < pts.length; i++) {
+            await dispatchDot(tabId, pts[i][0], pts[i][1]);
+          }
+          sendResponse({ ok: true, count: pts.length });
+        } catch (e) {
+          sendResponse({ ok: false, error: e.message });
         }
-        sendResponse({ ok: true, count: pts.length });
-      } catch (e) {
-        sendResponse({ ok: false, error: e.message });
-      }
-    })();
-    return true;
-  }
+      })();
+      return true;
+    }
 
-  if (msg.action === 'drawStroke') {
-    ensureAttached(tabId)
-      .then(() => dispatchStroke(tabId, msg.x1, msg.y1, msg.x2, msg.y2))
-      .then(() => sendResponse({ ok: true }))
-      .catch(e => sendResponse({ ok: false, error: e.message }));
-    return true;
-  }
+    if (msg.action === 'drawStroke') {
+      ensureAttached(tabId)
+        .then(() => dispatchStroke(tabId, msg.x1, msg.y1, msg.x2, msg.y2))
+        .then(() => sendResponse({ ok: true }))
+        .catch(e => sendResponse({ ok: false, error: e.message }));
+      return true;
+    }
 
-  if (msg.action === 'clickAt') {
-    ensureAttached(tabId)
-      .then(() => dispatchClick(tabId, msg.x, msg.y))
-      .then(() => sendResponse({ ok: true }))
-      .catch(e => sendResponse({ ok: false, error: e.message }));
-    return true;
-  }
+    if (msg.action === 'clickAt') {
+      ensureAttached(tabId)
+        .then(() => dispatchClick(tabId, msg.x, msg.y))
+        .then(() => sendResponse({ ok: true }))
+        .catch(e => sendResponse({ ok: false, error: e.message }));
+      return true;
+    }
 
-  return false;
-});
+    return false;
+  });
 
-// Clean up when debugger is externally detached (user clicks cancel on the yellow bar)
-chrome.debugger.onDetach.addListener((source) => {
-  if (source.tabId) attachedTabs.delete(source.tabId);
-});
+  // Clean up when debugger is externally detached (user clicks cancel on the yellow bar)
+  chrome.debugger.onDetach.addListener((source) => {
+    if (source.tabId) attachedTabs.delete(source.tabId);
+  });
 
-// Clean up when tab closes
-chrome.tabs.onRemoved.addListener((tabId) => {
-  attachedTabs.delete(tabId);
-});
+  // Clean up when tab closes
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    attachedTabs.delete(tabId);
+  });
+}

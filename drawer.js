@@ -56,10 +56,12 @@
     };
   }
 
-  // Precompute LAB for each palette entry
+  // Precompute LAB, chroma, hue for each palette entry
   PALETTE.forEach(c => {
     const lab = rgbToLab(c.r, c.g, c.b);
     c.L = lab.L; c.A = lab.a; c.B = lab.b;
+    c.chroma = Math.sqrt(lab.a * lab.a + lab.b * lab.b);
+    c.hue = Math.atan2(lab.b, lab.a);
   });
 
   // ── Color distance (perceptual, CIELAB Delta E) ─────────────────────────
@@ -74,13 +76,37 @@
     return dL * dL + da * da + db * db;
   }
 
+  // Hue angle difference in [-PI, PI]; wrap so difference is at most PI
+  function hueDiff(h1, h2) {
+    let d = h1 - h2;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    return d;
+  }
+
+  const MIN_CHROMA_FOR_HUE = 18;   // pixel chroma above this: prefer same-hue palette colors
+  const PALETTE_MIN_CHROMA = 12;   // only consider palette entries with chroma above this for hue match
+  const HUE_ANGLE_MARGIN = (120 * Math.PI) / 180;  // ~120° same-hue band
+
   function nearestColorId(r, g, b, skipWhite) {
     const pal = skipWhite ? PALETTE_NO_WHITE : PALETTE;
     const lab = rgbToLab(r, g, b);
-    let best = pal[0], bestD = Infinity;
-    for (let i = 0; i < pal.length; i++) {
-      const d = labDistSq(lab.L, lab.a, lab.b, pal[i].L, pal[i].A, pal[i].B);
-      if (d < bestD) { bestD = d; best = pal[i]; }
+    const chroma = Math.sqrt(lab.a * lab.a + lab.b * lab.b);
+    const hue = Math.atan2(lab.b, lab.a);
+
+    let candidates = pal;
+    if (chroma >= MIN_CHROMA_FOR_HUE) {
+      const sameHue = pal.filter((c) => {
+        if (c.chroma < PALETTE_MIN_CHROMA) return false;
+        return Math.abs(hueDiff(hue, c.hue)) <= HUE_ANGLE_MARGIN;
+      });
+      if (sameHue.length > 0) candidates = sameHue;
+    }
+
+    let best = candidates[0], bestD = Infinity;
+    for (let i = 0; i < candidates.length; i++) {
+      const d = labDistSq(lab.L, lab.a, lab.b, candidates[i].L, candidates[i].A, candidates[i].B);
+      if (d < bestD) { bestD = d; best = candidates[i]; }
     }
     return best.id;
   }
@@ -100,14 +126,118 @@
     return canvas;
   }
 
+  // BG removal: make near-white pixels transparent so they aren't drawn.
+  // - threshold (0–120): pixels whose RGB is within (threshold²×3) of white (255,255,255)
+  //   in squared distance become transparent. Higher = more aggressive removal.
+  // - Pixels with luminance ≥ 250 are also removed (bright highlights).
   function removeBackground(canvas, threshold) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const d = imgData.data;
+    const w = canvas.width;
     const t = threshold * threshold * 3;
+    const lum = (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b;
     for (let i = 0; i < d.length; i += 4) {
-      const dr = 255 - d[i], dg = 255 - d[i + 1], db = 255 - d[i + 2];
-      if (dr * dr + dg * dg + db * db < t) d[i + 3] = 0;
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      const dr = 255 - r, dg = 255 - g, db = 255 - b;
+      const distSq = dr * dr + dg * dg + db * db;
+      const L = lum(r, g, b);
+      if (distSq < t || L >= 250) d[i + 3] = 0;
+    }
+    ctx.putImageData(imgData, 0, 0);
+    return canvas;
+  }
+
+  // Bounding box of visible pixels (alpha >= 128)
+  function getContentBounds(canvas) {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = imgData.data, w = canvas.width, h = canvas.height;
+    let xMin = w, xMax = 0, yMin = h, yMax = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (d[i + 3] >= 128) {
+          if (x < xMin) xMin = x;
+          if (x > xMax) xMax = x;
+          if (y < yMin) yMin = y;
+          if (y > yMax) yMax = y;
+        }
+      }
+    }
+    if (xMin > xMax || yMin > yMax) return null;
+    return { xMin, yMin, xMax, yMax, w: xMax - xMin + 1, h: yMax - yMin + 1 };
+  }
+
+  // Crop to subject and scale to fit canvas while preserving aspect ratio (no stretching)
+  function cropToContentAndScale(canvas, padding) {
+    const bounds = getContentBounds(canvas);
+    if (!bounds || bounds.w < 4 || bounds.h < 4) return canvas;
+    const pad = Math.max(0, padding || 0);
+    const sx = Math.max(0, bounds.xMin - pad);
+    const sy = Math.max(0, bounds.yMin - pad);
+    const sw = Math.min(canvas.width - sx, bounds.w + 2 * pad);
+    const sh = Math.min(canvas.height - sy, bounds.h + 2 * pad);
+    const scale = Math.min(CANVAS_W / sw, CANVAS_H / sh);
+    const dw = Math.round(sw * scale);
+    const dh = Math.round(sh * scale);
+    const dx = Math.round((CANVAS_W - dw) / 2);
+    const dy = Math.round((CANVAS_H - dh) / 2);
+    const out = document.createElement('canvas');
+    out.width = CANVAS_W;
+    out.height = CANVAS_H;
+    const ctx = out.getContext('2d', { willReadFrequently: true });
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    ctx.drawImage(canvas, sx, sy, sw, sh, dx, dy, dw, dh);
+    return out;
+  }
+
+  // Measure color variance over visible pixels (luminance range 0..255)
+  function measureColorVariance(canvas) {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = imgData.data;
+    let rMin = 255, rMax = 0, gMin = 255, gMax = 0, bMin = 255, bMax = 0;
+    let count = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 128) continue;
+      count++;
+      if (d[i] < rMin) rMin = d[i];
+      if (d[i] > rMax) rMax = d[i];
+      if (d[i + 1] < gMin) gMin = d[i + 1];
+      if (d[i + 1] > gMax) gMax = d[i + 1];
+      if (d[i + 2] < bMin) bMin = d[i + 2];
+      if (d[i + 2] > bMax) bMax = d[i + 2];
+    }
+    const lum = (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b;
+    const lMin = lum(rMin, gMin, bMin), lMax = lum(rMax, gMax, bMax);
+    const luminanceRange = lMax - lMin;
+    const channelRange = Math.max(rMax - rMin, gMax - gMin, bMax - bMin);
+    return { count, luminanceRange, channelRange, rMin, rMax, gMin, gMax, bMin, bMax };
+  }
+
+  // Stretch contrast so visible pixels use full 0–255 range; improves recognition for low-contrast images
+  function enhanceLowContrast(canvas) {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = imgData.data;
+    let rMin = 255, rMax = 0, gMin = 255, gMax = 0, bMin = 255, bMax = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 128) continue;
+      if (d[i] < rMin) rMin = d[i];
+      if (d[i] > rMax) rMax = d[i];
+      if (d[i + 1] < gMin) gMin = d[i + 1];
+      if (d[i + 1] > gMax) gMax = d[i + 1];
+      if (d[i + 2] < bMin) bMin = d[i + 2];
+      if (d[i + 2] > bMax) bMax = d[i + 2];
+    }
+    const rSpan = rMax - rMin || 1, gSpan = gMax - gMin || 1, bSpan = bMax - bMin || 1;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 128) continue;
+      d[i] = Math.max(0, Math.min(255, Math.round((d[i] - rMin) * 255 / rSpan)));
+      d[i + 1] = Math.max(0, Math.min(255, Math.round((d[i + 1] - gMin) * 255 / gSpan)));
+      d[i + 2] = Math.max(0, Math.min(255, Math.round((d[i + 2] - bMin) * 255 / bSpan)));
     }
     ctx.putImageData(imgData, 0, 0);
     return canvas;
@@ -138,14 +268,21 @@
     return out;
   }
 
-  // ── Path ordering: nearest-neighbor within each color group ──────────
-  // Groups points by colorId (preserving back-to-front order), then within
-  // each group reorders by greedy nearest-neighbor to minimise pen travel.
+  // ── Path ordering: spatial clusters, then fill by rows within each ─────
+  // Groups by color (back-to-front). Within each color, builds spatially
+  // coherent chains so we never draw across disconnected regions. Then
+  // fills each chain row-by-row (sort by y, x); splits row on x-gap so we
+  // don't draw across holes (e.g. rim vs tire). Output order avoids merging
+  // across gaps so interior fills with 1 stroke per line.
 
-  function orderPointsByPath(points) {
+  const CLUSTER_JOIN_DIST_SQ = 3600;  // max dist^2 to add to same chain (~60px)
+  const DIAGONAL_PENALTY = 800;       // favors axis-aligned next point over diagonal
+  const ROW_TOL = 4;                  // same row for fill
+  const X_GAP = 30;                   // gap (px) on same row → new run (avoid cross-hole stroke)
+
+  function orderPointsByPath(points, alphaData, alphaW, alphaH) {
     if (points.length <= 1) return points;
 
-    // Group by color, preserving order of first appearance (back-to-front)
     const groupMap = new Map();
     for (let i = 0; i < points.length; i++) {
       const cId = points[i].colorId;
@@ -154,47 +291,110 @@
     }
 
     const result = [];
-    for (const [, group] of groupMap) {
+    const entries = Array.from(groupMap.entries());
+    entries.sort((a, b) => {
+      const idA = a[0], idB = b[0];
+      if (idA === 0) return 1;
+      if (idB === 0) return -1;
+      return idB - idA;
+    });
+    for (const [, group] of entries) {
       if (group.length <= 2) {
-        for (let i = 0; i < group.length; i++) result.push(group[i]);
+        group.forEach(p => result.push(p));
         continue;
       }
-      // Nearest-neighbor ordering
       const used = new Uint8Array(group.length);
-      const ordered = [group[0]];
-      used[0] = 1;
-      let cx = group[0].x, cy = group[0].y;
-      for (let n = 1; n < group.length; n++) {
-        let bestIdx = -1, bestD = Infinity;
+      let left = group.length;
+      while (left > 0) {
+        let startIdx = -1;
         for (let j = 0; j < group.length; j++) {
-          if (used[j]) continue;
-          const dx = group[j].x - cx, dy = group[j].y - cy;
-          const d = dx * dx + dy * dy;
-          if (d < bestD) { bestD = d; bestIdx = j; }
+          if (!used[j]) { startIdx = j; break; }
         }
-        used[bestIdx] = 1;
-        ordered.push(group[bestIdx]);
-        cx = group[bestIdx].x;
-        cy = group[bestIdx].y;
+        if (startIdx === -1) break;
+        const chain = [group[startIdx]];
+        used[startIdx] = 1;
+        left--;
+        let cx = group[startIdx].x, cy = group[startIdx].y;
+        for (;;) {
+          let bestIdx = -1, bestScore = Infinity;
+          for (let j = 0; j < group.length; j++) {
+            if (used[j]) continue;
+            const dx = group[j].x - cx, dy = group[j].y - cy;
+            const d = dx * dx + dy * dy;
+            if (d > CLUSTER_JOIN_DIST_SQ) continue;
+            const axisPenalty = Math.min(dx * dx, dy * dy);
+            const score = d + DIAGONAL_PENALTY * Math.min(1, axisPenalty / 400);
+            if (score < bestScore) { bestScore = score; bestIdx = j; }
+          }
+          if (bestIdx === -1) break;
+          used[bestIdx] = 1;
+          left--;
+          chain.push(group[bestIdx]);
+          cx = group[bestIdx].x;
+          cy = group[bestIdx].y;
+        }
+        // Fill this cluster by rows; split row on x-gap so we don't stroke across holes
+        chain.sort((a, b) => (a.y !== b.y) ? a.y - b.y : a.x - b.x);
+        const runs = [];
+        let runIndex = 0;
+        let rowY = null;
+        let currentRun = [];
+        let prev = null;
+        for (let k = 0; k < chain.length; k++) {
+          const p = chain[k];
+          const newRow = prev && Math.abs(p.y - prev.y) > ROW_TOL;
+          const gap = prev && !newRow && (p.x - prev.x) > X_GAP;
+          const crossesTransparent = prev && alphaData && alphaW && alphaH &&
+            lineCrossesTransparent(alphaData, alphaW, alphaH, prev.x, prev.y, p.x, p.y);
+          if (prev && (newRow || gap || crossesTransparent)) {
+            runs.push({ rowY, runIndex, points: currentRun });
+            currentRun = [];
+            runIndex = newRow ? 0 : runIndex + 1;
+          }
+          currentRun.push(p);
+          rowY = p.y;
+          prev = p;
+        }
+        if (currentRun.length) runs.push({ rowY, runIndex, points: currentRun });
+        runs.sort((a, b) => (a.runIndex !== b.runIndex) ? a.runIndex - b.runIndex : a.rowY - b.rowY);
+        runs.forEach(r => r.points.forEach(p => result.push(p)));
       }
-      for (let i = 0; i < ordered.length; i++) result.push(ordered[i]);
     }
     return result;
   }
 
+  // Luminance range (0–255) below which we treat the image as low-contrast and boost it
+  const LOW_CONTRAST_LUMINANCE_RANGE = 72;
+
   function processImage(img, options) {
-    const { bgThreshold, density, maxPoints, useWhite } = options;
+    const { bgThreshold, density, maxPoints, useWhite, skipDrawWhite } = options;
     const skipWhite = useWhite === false;
-    const step = Math.max(1, Math.round(11 - density));
+    const skipWhiteDraw = skipDrawWhite !== false;
+    const step = Math.max(1, Math.round(8 - density));  // finer step = more points, sharper result
     let canvas = resizeImageToCanvas(img);
-    if (bgThreshold > 0) canvas = removeBackground(canvas, bgThreshold);
+    if (bgThreshold > 0) {
+      canvas = removeBackground(canvas, bgThreshold);
+      canvas = cropToContentAndScale(canvas, 8);
+    }
+    let contrastBoosted = false;
+    const variance = measureColorVariance(canvas);
+    if (variance.count > 0 && variance.luminanceRange < LOW_CONTRAST_LUMINANCE_RANGE) {
+      enhanceLowContrast(canvas);
+      contrastBoosted = true;
+    }
     let points = sampleToPoints(canvas, step, skipWhite);
-    // Draw back-to-front: higher color ids first, black (1) last so contour stays on top
     points.sort((a, b) => b.colorId - a.colorId);
-    // Path-optimize within each color group (nearest-neighbor)
-    points = orderPointsByPath(points);
+    let alphaData = null, alphaW = 0, alphaH = 0;
+    try {
+      const imgData = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+      alphaData = imgData.data;
+      alphaW = canvas.width;
+      alphaH = canvas.height;
+    } catch (_) {}
+    points = orderPointsByPath(points, alphaData, alphaW, alphaH);
+    if (skipWhiteDraw) points = points.filter(p => p.colorId !== 0);
     if (maxPoints > 0 && points.length > maxPoints) points = downsamplePoints(points, maxPoints);
-    return { canvas, points };
+    return { canvas, points, contrastBoosted };
   }
 
   // ── Socket bridge (via page-context postMessage) ────────────────────────
@@ -222,15 +422,36 @@
 
   // ── Debugger bridge (via chrome.runtime.sendMessage to background) ──────
 
-  function sendToBg(msg) {
-    return new Promise((resolve) => {
-      chrome.runtime.sendMessage(msg, (resp) => {
-        if (chrome.runtime.lastError) {
-          resolve({ ok: false, error: chrome.runtime.lastError.message });
-        } else {
-          resolve(resp || { ok: false, error: 'no response' });
+  const EXTENSION_INVALIDATED_MSG = 'Extension was reloaded or disabled. Refresh the skribbl.io page and try again.';
+  const SEND_RETRY_DELAY_MS = 600;
+  const SEND_RETRY_MAX = 3;
+
+  function sendToBg(msg, retriesLeft) {
+    if (retriesLeft === undefined) retriesLeft = SEND_RETRY_MAX;
+    return new Promise((resolve, reject) => {
+      try {
+        if (!chrome.runtime?.id) {
+          reject(new Error(EXTENSION_INVALIDATED_MSG));
+          return;
         }
-      });
+        chrome.runtime.sendMessage(msg, (resp) => {
+          if (chrome.runtime.lastError) {
+            const errMsg = chrome.runtime.lastError.message || '';
+            const isConnectionError = /Receiving end does not exist|Could not establish connection|Extension context invalidated/i.test(errMsg);
+            if (isConnectionError && retriesLeft > 0) {
+              setTimeout(() => {
+                sendToBg(msg, retriesLeft - 1).then(resolve).catch(reject);
+              }, SEND_RETRY_DELAY_MS);
+              return;
+            }
+            reject(new Error(errMsg || EXTENSION_INVALIDATED_MSG));
+            return;
+          }
+          resolve(resp || { ok: false, error: 'no response' });
+        });
+      } catch (e) {
+        reject(new Error((e && e.message) || EXTENSION_INVALIDATED_MSG));
+      }
     });
   }
 
@@ -271,20 +492,25 @@
 
   function listAllCanvases() {
     const out = [];
-    const all = document.querySelectorAll('canvas');
-    all.forEach(function (c, i) {
-      const rect = c.getBoundingClientRect();
-      const style = window.getComputedStyle(c);
-      const visible = rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
-      out.push({
-        index: i, width: c.width, height: c.height,
-        displayWidth: Math.round(rect.width), displayHeight: Math.round(rect.height),
-        top: Math.round(rect.top), left: Math.round(rect.left),
-        id: c.id || '(no id)',
-        className: (c.className && typeof c.className === 'string') ? c.className : '(none)',
-        visible: visible, el: c,
+    let index = 0;
+    const docs = getDocumentsToSearch();
+    for (let di = 0; di < docs.length; di++) {
+      const doc = docs[di];
+      const all = doc.querySelectorAll('canvas');
+      all.forEach(function (c) {
+        const rect = c.getBoundingClientRect();
+        const style = (doc.defaultView && doc.defaultView.getComputedStyle(c)) || getComputedStyle(c);
+        const visible = rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+        out.push({
+          index: index++, width: c.width, height: c.height,
+          displayWidth: Math.round(rect.width), displayHeight: Math.round(rect.height),
+          top: Math.round(rect.top), left: Math.round(rect.left),
+          id: c.id || '(no id)',
+          className: (c.className && typeof c.className === 'string') ? c.className : '(none)',
+          visible: visible, el: c,
+        });
       });
-    });
+    }
     return out;
   }
 
@@ -319,32 +545,132 @@
     log('Canvas pick: none'); return null;
   }
 
-  function findColorElements() {
-    const box = document.querySelector('.containerColorbox') || document.querySelector('[class*="colorbox"]');
-    if (box) {
-      return Array.from(box.querySelectorAll('div')).filter(d => {
-        const bg = d.style.backgroundColor || '';
-        return bg.startsWith('rgb');
-      });
+  function getDocumentsToSearch() {
+    const docs = [document];
+    try {
+      const iframes = document.querySelectorAll('iframe');
+      for (let i = 0; i < iframes.length; i++) {
+        try {
+          const d = iframes[i].contentDocument;
+          if (d && d !== document) docs.push(d);
+        } catch (e) {}
+      }
+    } catch (e) {}
+    return docs;
+  }
+
+  function queryAllRootsInDoc(doc, selector) {
+    const out = [];
+    try {
+      doc.querySelectorAll(selector).forEach(el => out.push(el));
+    } catch (e) {}
+    function walk(root) {
+      if (!root || !root.querySelectorAll) return;
+      try {
+        root.querySelectorAll(selector).forEach(el => out.push(el));
+      } catch (e) {}
+      try {
+        root.querySelectorAll('*').forEach(el => { if (el.shadowRoot) walk(el.shadowRoot); });
+      } catch (e) {}
     }
-    const candidates = document.querySelectorAll('div[style*="background"]');
-    const result = [];
-    for (const d of candidates) {
-      const s = d.getBoundingClientRect();
-      if (s.width > 10 && s.width < 60 && s.height > 10 && s.height < 60) {
+    walk(doc);
+    return out;
+  }
+
+  function queryAllRoots(selector) {
+    return queryAllRootsInDoc(document, selector);
+  }
+
+  function parseRgbFromStyle(bg) {
+    if (!bg) return null;
+    const rgb = bg.match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/);
+    if (rgb) return { r: +rgb[1], g: +rgb[2], b: +rgb[3] };
+    const hex = bg.match(/#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b/);
+    if (hex) {
+      const h = hex[1].length === 3
+        ? hex[1].replace(/(.)/g, '$1$1')
+        : hex[1];
+      return {
+        r: parseInt(h.slice(0, 2), 16),
+        g: parseInt(h.slice(2, 4), 16),
+        b: parseInt(h.slice(4, 6), 16),
+      };
+    }
+    return null;
+  }
+
+  function findColorElementsInDoc(doc) {
+    const seen = new Set();
+    const out = [];
+    function add(el) { if (el && !seen.has(el)) { seen.add(el); out.push(el); } }
+    queryAllRootsInDoc(doc, '.colorItem').forEach(add);
+    const boxSelectors = ['.containerColorbox', '[class*="colorbox"]', '#containerBoard [class*="color"]', '[class*="Colorbox"]'];
+    let box = null;
+    for (const sel of boxSelectors) {
+      const els = queryAllRootsInDoc(doc, sel);
+      for (const el of els) {
+        if (el && el.querySelectorAll) { box = el; break; }
+      }
+      if (box) break;
+    }
+    if (box && out.length === 0) {
+      Array.from(box.querySelectorAll('div')).filter(d => {
+        const bg = d.style.backgroundColor || getComputedStyle(d).backgroundColor || '';
+        return bg.startsWith('rgb') || /#[0-9a-fA-F]{3,6}/.test(bg);
+      }).forEach(add);
+    }
+    if (out.length === 0) {
+      const candidates = queryAllRootsInDoc(doc, 'div[style*="background"], [class*="color"] div, [class*="Color"] div');
+      for (const d of candidates) {
+        const rect = d.getBoundingClientRect();
+        if (rect.width < 8 || rect.width > 70 || rect.height < 8 || rect.height > 70) continue;
         const bg = d.style.backgroundColor || getComputedStyle(d).backgroundColor;
-        if (bg && bg.startsWith('rgb')) result.push(d);
+        if (bg && (bg.startsWith('rgb') || /#[0-9a-fA-F]{3,6}/.test(bg))) add(d);
       }
     }
-    return result;
+    return out;
+  }
+
+  function findColorElements() {
+    const docs = getDocumentsToSearch();
+    for (let i = 0; i < docs.length; i++) {
+      const out = findColorElementsInDoc(docs[i]);
+      if (out.length > 0) return out;
+    }
+    return [];
+  }
+
+  function findBrushSizeElementsInDoc(doc) {
+    const selectors = [
+      '.containerBrushSizes div', '.containerBrushSizes button',
+      '[class*="BrushSize"] div', '[class*="brushSize"] div', '[class*="brush"] div',
+      '#containerBoard [class*="brush"] div', '#containerBoard [class*="Brush"] div',
+      '.containerToolbar [class*="brush"] div',
+    ];
+    for (const sel of selectors) {
+      const list = queryAllRootsInDoc(doc, sel);
+      const filtered = list.filter(el => {
+        const r = el.getBoundingClientRect();
+        return r.width > 4 && r.height > 4 && r.width < 80 && r.height < 80;
+      });
+      if (filtered.length > 0) return filtered;
+    }
+    return [];
   }
 
   function findBrushSizeElements() {
-    return Array.from(document.querySelectorAll('.containerBrushSizes div, [class*="brush"] div'));
+    const docs = getDocumentsToSearch();
+    for (let i = 0; i < docs.length; i++) {
+      const out = findBrushSizeElementsInDoc(docs[i]);
+      if (out.length > 0) return out;
+    }
+    return [];
   }
 
   // ── Viewport coordinate helpers ─────────────────────────────────────────
   // CDP Input.dispatchMouseEvent uses viewport (layout viewport) coordinates.
+  // Map our 800x600 space to the game canvas display rect; round to integers
+  // so the game receives consistent pixel positions and drawing stays precise.
 
   function gameToViewport(canvasEl, gameX, gameY) {
     const rect = canvasEl.getBoundingClientRect();
@@ -364,25 +690,42 @@
   // ── Color clicking via CDP ──────────────────────────────────────────────
 
   let lastClickedColorId = -1;
+  let usedIndexFallback = false;
 
   async function clickColorCDP(colorId, logFn) {
     if (colorId === lastClickedColorId) return;
     const target = PALETTE[colorId];
     if (!target) return;
     const colorEls = findColorElements();
+    let bestBtn = null, bestD = Infinity;
     for (const btn of colorEls) {
       const bg = btn.style.backgroundColor || getComputedStyle(btn).backgroundColor;
-      const m = bg.match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/);
-      if (!m) continue;
-      if (colorDistSq(+m[1], +m[2], +m[3], target.r, target.g, target.b) < 400) {
-        const c = elementCenter(btn);
-        await debuggerClickAt(c.x, c.y);
-        await delay(80);
-        lastClickedColorId = colorId;
-        return;
-      }
+      const rgb = parseRgbFromStyle(bg);
+      if (!rgb) continue;
+      const lab = rgbToLab(rgb.r, rgb.g, rgb.b);
+      const d = labDistSq(lab.L, lab.a, lab.b, target.L, target.A, target.B);
+      if (d < bestD) { bestD = d; bestBtn = btn; }
     }
-    if (logFn) logFn('clickColorCDP: no match for colorId=' + colorId);
+    if (bestBtn && bestD < 1800) {
+      const c = elementCenter(bestBtn);
+      await debuggerClickAt(c.x, c.y);
+      await delay(80);
+      lastClickedColorId = colorId;
+      return;
+    }
+    if (colorEls.length >= 11 && colorId >= 0 && colorId < colorEls.length) {
+      const btn = colorEls[colorId];
+      const c = elementCenter(btn);
+      await debuggerClickAt(c.x, c.y);
+      await delay(80);
+      lastClickedColorId = colorId;
+      if (!usedIndexFallback && logFn) {
+        usedIndexFallback = true;
+        logFn('clickColorCDP: using palette index fallback (colorEls=' + colorEls.length + ')');
+      }
+      return;
+    }
+    if (logFn) logFn('clickColorCDP: no match for colorId=' + colorId + ' (colorEls=' + colorEls.length + ')');
   }
 
   async function clickBrushSizeCDP(brushSize, logFn) {
@@ -473,11 +816,16 @@
     running: false, points: [], index: 0,
     timer: null, onProgress: null, onDone: null,
     method: 'cdp',
+    keepAlivePort: null,
   };
 
   function stopDrawing() {
     drawState.running = false;
     if (drawState.timer) { clearTimeout(drawState.timer); drawState.timer = null; }
+    if (drawState.keepAlivePort) {
+      try { drawState.keepAlivePort.disconnect(); } catch (_) {}
+      drawState.keepAlivePort = null;
+    }
   }
 
   function startDrawing(points, options) {
@@ -493,85 +841,211 @@
     drawState.onDone = onDone || null;
 
     // Method priority: CDP debugger > socket > (nothing)
-    (async () => {
-      const canvasEl = findGameCanvas(logFn);
-      if (!canvasEl) {
-        drawState.running = false;
-        logFn('Draw: no canvas found');
-        if (onDone) onDone('No canvas found');
-        return;
-      }
-
-      logFn('Draw: attempting debugger attach...');
-      const dbgOk = await checkDebuggerReady();
-      logFn('Draw: debugger=' + dbgOk);
-
-      if (dbgOk) {
-        drawState.method = 'cdp';
-        if (options.onMethod) options.onMethod('cdp (trusted mouse)');
-        logFn('Draw: using CDP, brushSize=' + brushSize + ', chunkSize=' + chunkSize + ', delay=' + chunkDelayMs + 'ms');
-        await clickBrushSizeCDP(brushSize, logFn);
-        lastClickedColorId = -1;
-        runCDPLoop(points, canvasEl, chunkSize, chunkDelayMs, brushSize, logFn);
-        return;
-      }
-
-      logFn('Draw: debugger unavailable, checking socket...');
-      checkSocketReady((socketOk) => {
-        if (socketOk) {
-          drawState.method = 'socket';
-          if (options.onMethod) options.onMethod('socket');
-          logFn('Draw: using socket');
-          runSocketLoop(points, chunkSize, chunkDelayMs, brushSize, logFn);
-        } else {
+    const drawPromise = (async () => {
+      try {
+        const canvasEl = findGameCanvas(logFn);
+        if (!canvasEl) {
           drawState.running = false;
-          logFn('Draw: no debugger and no socket');
-          if (onDone) onDone('No debugger and no socket available. Reload the page and try again.');
+          logFn('Draw: no canvas found');
+          if (onDone) onDone('No canvas found');
+          return;
         }
-      });
+
+        logFn('Draw: attempting debugger attach...');
+        const dbgOk = await checkDebuggerReady();
+        logFn('Draw: debugger=' + dbgOk);
+
+        if (dbgOk) {
+          drawState.method = 'cdp';
+          if (options.onMethod) options.onMethod('cdp (trusted mouse)');
+          logFn('Draw: using CDP, brushSize=' + brushSize + ', chunkSize=' + chunkSize + ', delay=' + chunkDelayMs + 'ms');
+          if (chrome.runtime?.id) {
+            try {
+              drawState.keepAlivePort = chrome.runtime.connect({ name: 'drawKeepAlive' });
+            } catch (_) {}
+          }
+          await clickBrushSizeCDP(brushSize, logFn);
+          lastClickedColorId = -1;
+          usedIndexFallback = false;
+          await runCDPLoop(points, canvasEl, chunkSize, chunkDelayMs, brushSize, logFn, options.processedCanvas || null);
+          return;
+        }
+
+        logFn('Draw: debugger unavailable, checking socket...');
+        checkSocketReady((socketOk) => {
+          if (socketOk) {
+            drawState.method = 'socket';
+            if (options.onMethod) options.onMethod('socket');
+            logFn('Draw: using socket');
+            runSocketLoop(points, chunkSize, chunkDelayMs, brushSize, logFn);
+          } else {
+            drawState.running = false;
+            logFn('Draw: no debugger and no socket');
+            if (onDone) onDone('No debugger and no socket available. Reload the page and try again.');
+          }
+        });
+      } catch (e) {
+        drawState.running = false;
+        if (drawState.keepAlivePort) {
+          try { drawState.keepAlivePort.disconnect(); } catch (_) {}
+          drawState.keepAlivePort = null;
+        }
+        const msg = (e && e.message) || String(e);
+        logFn('Draw: ' + msg);
+        if (onDone) onDone(msg);
+      }
     })();
+    drawPromise.catch((e) => {
+      drawState.running = false;
+      if (drawState.keepAlivePort) {
+        try { drawState.keepAlivePort.disconnect(); } catch (_) {}
+        drawState.keepAlivePort = null;
+      }
+      const msg = (e && e.message) || String(e);
+      logFn('Draw: ' + msg);
+      if (onDone) onDone(msg);
+    });
   }
 
-  // Max distance (in game coords) for a stroke between two same-color points
-  const MAX_STROKE_DIST = 50;
+  // Max distance to connect two consecutive points as a stroke (game coords)
+  const MAX_STROKE_DIST = 85;
+  const MAX_LINE_LENGTH = 280;
+  const STROKE_SETTLE_MS = 12;
+  const AXIS_TOL = 4;
 
-  // CDP draw loop: uses strokes for nearby same-color consecutive points
-  async function runCDPLoop(points, canvasEl, chunkSize, chunkDelayMs, brushSize, logFn) {
+  function distPointToLineSegment(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq < 1e-6) return Math.hypot(px - ax, py - ay);
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+    const qx = ax + t * dx, qy = ay + t * dy;
+    return Math.hypot(px - qx, py - qy);
+  }
+
+  function distPointToLine(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq < 1e-6) return Math.hypot(px - ax, py - ay);
+    const t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
+    const qx = ax + t * dx, qy = ay + t * dy;
+    return Math.hypot(px - qx, py - qy);
+  }
+
+  // Returns true if any pixel on the line (x1,y1)->(x2,y2) has alpha < 128 in the processed image.
+  // Used to avoid drawing strokes across transparent areas (only draw where the original has color).
+  function lineCrossesTransparent(data, w, h, x1, y1, x2, y2) {
+    const ix1 = Math.round(x1), iy1 = Math.round(y1), ix2 = Math.round(x2), iy2 = Math.round(y2);
+    const dx = Math.abs(ix2 - ix1), dy = Math.abs(iy2 - iy1);
+    const steps = Math.max(dx, dy, 1);
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const x = Math.round(ix1 + t * (ix2 - ix1));
+      const y = Math.round(iy1 + t * (iy2 - iy1));
+      const cx = Math.max(0, Math.min(w - 1, x));
+      const cy = Math.max(0, Math.min(h - 1, y));
+      if (data[(cy * w + cx) * 4 + 3] < 128) return true;
+    }
+    return false;
+  }
+
+  // CDP draw loop: uses strokes for nearby same-color points; merges collinear points into one stroke
+  async function runCDPLoop(points, canvasEl, chunkSize, chunkDelayMs, brushSize, logFn, processedCanvas) {
     let currentColorId = -1;
     let chunkCount = 0;
     let strokeCount = 0, dotCount = 0;
 
+    let alphaData = null;
+    let alphaW = 0, alphaH = 0;
+    if (processedCanvas && processedCanvas.width && processedCanvas.height) {
+      try {
+        const ctx = processedCanvas.getContext('2d');
+        const imgData = ctx.getImageData(0, 0, processedCanvas.width, processedCanvas.height);
+        alphaData = imgData.data;
+        alphaW = processedCanvas.width;
+        alphaH = processedCanvas.height;
+      } catch (_) {}
+    }
+
+    function finish(reason, err) {
+      drawState.running = false;
+      if (drawState.timer) { clearTimeout(drawState.timer); drawState.timer = null; }
+      if (drawState.keepAlivePort) {
+        try { drawState.keepAlivePort.disconnect(); } catch (_) {}
+        drawState.keepAlivePort = null;
+      }
+      if (reason) logFn('Draw: ' + reason);
+      if (drawState.onDone) drawState.onDone(err || null);
+    }
+
+    // Set first point's color before any drawing so the first stroke uses it
+    if (points.length > 0) {
+      await clickColorCDP(points[0].colorId, logFn);
+      currentColorId = points[0].colorId;
+      await delay(120);
+    }
+
     async function tick() {
       if (!drawState.running) return;
+      if (!canvasEl.isConnected) {
+        finish('canvas removed (e.g. round ended)');
+        return;
+      }
 
       const end = Math.min(drawState.index + chunkSize, points.length);
 
-      for (let i = drawState.index; i < end; i++) {
-        if (!drawState.running) return;
-        const p = points[i];
-        if (p.colorId !== currentColorId) {
-          await clickColorCDP(p.colorId, null);
-          currentColorId = p.colorId;
-        }
-
-        // Try to draw a stroke to the next point if same color and nearby
-        if (i + 1 < end && points[i + 1].colorId === p.colorId) {
-          const np = points[i + 1];
-          const dx = np.x - p.x, dy = np.y - p.y;
-          if (dx * dx + dy * dy <= MAX_STROKE_DIST * MAX_STROKE_DIST) {
-            const vp1 = gameToViewport(canvasEl, p.x, p.y);
-            const vp2 = gameToViewport(canvasEl, np.x, np.y);
-            await debuggerDrawStroke(vp1.x, vp1.y, vp2.x, vp2.y);
-            strokeCount++;
-            i++;
-            continue;
+      try {
+        for (let i = drawState.index; i < end; i++) {
+          if (!drawState.running) return;
+          const p = points[i];
+          if (p.colorId !== currentColorId) {
+            await clickColorCDP(p.colorId, null);
+            currentColorId = p.colorId;
           }
-        }
 
-        const vp = gameToViewport(canvasEl, p.x, p.y);
-        await debuggerDrawDot(vp.x, vp.y);
-        dotCount++;
+          if (i + 1 < end && points[i + 1].colorId === p.colorId) {
+            const np = points[i + 1];
+            const dx = np.x - p.x, dy = np.y - p.y;
+            const distSq = dx * dx + dy * dy;
+            const isHorizontal = Math.abs(dy) <= AXIS_TOL && distSq <= MAX_STROKE_DIST * MAX_STROKE_DIST;
+            const isVertical = Math.abs(dx) <= AXIS_TOL && distSq <= MAX_STROKE_DIST * MAX_STROKE_DIST;
+            if (isHorizontal || isVertical) {
+              let last = i + 1;
+              for (let j = i + 2; j < end && points[j].colorId === p.colorId; j++) {
+                const jdist = Math.hypot(points[j].x - p.x, points[j].y - p.y);
+                if (jdist > MAX_LINE_LENGTH) break;
+                const jx = points[j].x - p.x, jy = points[j].y - p.y;
+                const onAxis = isHorizontal
+                  ? Math.abs(points[j].y - p.y) <= AXIS_TOL
+                  : Math.abs(points[j].x - p.x) <= AXIS_TOL;
+                if (!onAxis) break;
+                const lx = points[last].x - p.x, ly = points[last].y - p.y;
+                const lenSq = lx * lx + ly * ly;
+                const t = lenSq > 1e-6 ? (jx * lx + jy * ly) / lenSq : 0;
+                if (t >= 0.98) last = j;
+                else break;
+              }
+              const crossesTransparent = alphaData && lineCrossesTransparent(alphaData, alphaW, alphaH, p.x, p.y, points[last].x, points[last].y);
+              if (!crossesTransparent) {
+                const vp1 = gameToViewport(canvasEl, p.x, p.y);
+                const vp2 = gameToViewport(canvasEl, points[last].x, points[last].y);
+                await debuggerDrawStroke(vp1.x, vp1.y, vp2.x, vp2.y);
+                if (STROKE_SETTLE_MS > 0) await delay(STROKE_SETTLE_MS);
+                strokeCount++;
+                i = last;
+                continue;
+              }
+            }
+          }
+
+          const vp = gameToViewport(canvasEl, p.x, p.y);
+          await debuggerDrawDot(vp.x, vp.y);
+          dotCount++;
+        }
+      } catch (e) {
+        finish('CDP error: ' + (e && e.message ? e.message : String(e)), e);
+        return;
       }
+
       chunkCount++;
       if (chunkCount === 1) logFn('Draw: first CDP chunk done');
 
@@ -579,9 +1053,8 @@
       if (drawState.onProgress) drawState.onProgress(drawState.index, points.length);
 
       if (drawState.index >= points.length) {
-        drawState.running = false;
         logFn('Draw: finished via CDP, points=' + points.length + ', strokes=' + strokeCount + ', dots=' + dotCount + ', chunks=' + chunkCount);
-        if (drawState.onDone) drawState.onDone(null);
+        finish();
         return;
       }
 

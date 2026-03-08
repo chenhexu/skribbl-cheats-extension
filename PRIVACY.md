@@ -2,6 +2,8 @@
 
 **Last updated:** 2025
 
+**Chrome Web Store:** For the Privacy form fields (single purpose, permission justifications, remote code), use the copy-paste text in [STORE_PRIVACY_FIELDS.md](STORE_PRIVACY_FIELDS.md).
+
 This extension **does not collect any user data**. The Chrome Web Store requires a privacy policy when an extension collects user data; because this extension does not collect data, a policy is not strictly required. This page is provided for transparency and to satisfy the store’s optional privacy policy URL field.
 
 ## Data collection
@@ -21,6 +23,7 @@ This data never leaves your device and is not sent to any server or third party.
 
 - **Host access (skribbl.io):** Used only to read the game hint and guess input on skribbl.io so the extension can suggest words and send guesses. It does not run on other sites.
 - **Storage:** Used only to save the above preferences and cache locally. No data is transmitted.
+- **Debugger:** Used only for the optional Auto-Drawer feature when drawing via Chrome DevTools Protocol (CDP). The extension attaches to the page to simulate mouse input on the game canvas. No data is sent elsewhere; the debugger is used only on the skribbl.io tab you are using.
 
 ## Changes
 
