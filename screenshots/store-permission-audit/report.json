@@ -1,0 +1,41 @@
+{
+  "version": "2.3.0",
+  "requiredPermissions": [
+    "debugger",
+    "storage",
+    "offscreen"
+  ],
+  "optionalOrigins": [
+    "http://127.0.0.1:8765/*"
+  ],
+  "browser": "C:\\Users\\chenh_u0xevwh\\AppData\\Local\\ms-playwright\\chromium-1234\\chrome-win64\\chrome.exe",
+  "extensionId": "lganljnlhppmcegjgfifndhpnemcaihj",
+  "grantedPermissions": {
+    "origins": [
+      "https://skribbl.io/*"
+    ],
+    "permissions": [
+      "debugger",
+      "storage",
+      "offscreen"
+    ]
+  },
+  "actualChromeStorage": {
+    "sagDrawerPreferences.v1.amplify": 70,
+    "sagDrawerPreferences.v1.budget": 90,
+    "sagDrawerPreferences.v1.detector": "ai",
+    "sagDrawerPreferences.v1.focus": "subject-background",
+    "sagDrawerPreferences.v1.speed": "balanced"
+  },
+  "sharedAcrossViewerTabs": true,
+  "persistedAfterBrowserRestart": true,
+  "withoutStoragePermission": {
+    "restoreFailed": true,
+    "saveFailed": true
+  },
+  "loopbackScope": {
+    "intendedPort": true,
+    "otherPort": false,
+    "wholeHost": false
+  }
+}

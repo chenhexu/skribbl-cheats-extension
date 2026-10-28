@@ -25,12 +25,14 @@
       drawerFloatHeight: 380,
       drawerFloatX: null,
       drawerFloatY: null,
+      relatedWords: false,
+      searchClosestFirst: true,
     };
 
     const PANEL_SIZE = { minWidth: 260, minHeight: 200, maxWidth: 1400, maxHeight: 1200 };
     const DEV_PANEL_SIZE = { minWidth: 260, minHeight: 280, maxWidth: 1000, maxHeight: 1200 };
     const DRAWER_FLOAT_SIZE = { minWidth: 280, minHeight: 44, maxWidth: 520, maxHeight: 1200 };
-    const SCRIPT_VERSION = 'v2.1.0 beta';
+    const SCRIPT_VERSION = 'v2.3.0';
   
     const LIMITS = {
       delayMin: 0,
@@ -3773,6 +3775,7 @@
       currentLetterPattern: '',
       lastProcessedHint: '',
       candidates: [],
+      searchMatches: new Map(),
       queue: [],
       sentThisRound: new Set(),
       chatGuessedThisRound: new Set(), // words already said in chat this round (by anyone)
@@ -3780,6 +3783,7 @@
       retryMap: new Map(),
       lastGuess: '',
       words: [],
+      removedWords: new Set(),
       wordsLoaded: false,
       roundToken: '',
       lastError: '',
@@ -3805,12 +3809,11 @@
       automationArmed: false,
       lastGamePhase: 'unknown',
       selfName: '',
-      lastChatTextLen: 0,
-      roundStartChatLen: 0,
       spamBlockedUntil: 0,
       cooldownRemainingMs: 0,
       spamDetectedCount: 0,
       spamRecoveryTimer: null,
+      spamCountdownTimer: null,
       closeHitSent: new Set(),
       revealedWords: new Set(),
       devLog: [],
@@ -3820,6 +3823,11 @@
       renderTopCandidatesPending: null,
       closeHitWatchTimer: null,
       closeHitWatchStop: null,
+      delivery: null,
+      deliveryPollTimer: null,
+      retryDelivery: null,
+      guessRound: 0,
+      closeHitEnabled: new Set(),
     };
   
     function loadSettings() {
@@ -3832,6 +3840,7 @@
     }
   
     const settings = loadSettings();
+    state.delivery = new window.SAGGuessDelivery.Tracker({onConfirm: confirmGuessDelivery, onReject: rejectGuessDelivery});
   
     function saveSettings() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
@@ -4064,7 +4073,7 @@
       try {
         localStorage.setItem(
           WORD_CACHE_KEY,
-          JSON.stringify({ version: '1', savedAt: Date.now(), words: state.words })
+          JSON.stringify({ version: '2', bundleVersion: SCRIPT_VERSION, savedAt: Date.now(), words: state.words, removedWords: [...state.removedWords] })
         );
       } catch {
         // ignore cache write failures
@@ -4079,7 +4088,9 @@
       }
   
       const exists = state.words.some((w) => normalizeWord(w) === cleaned);
+      const restored = state.removedWords.delete(cleaned);
       if (exists) {
+        if (restored) persistWordCache();
         setStatus(`Word already exists: ${cleaned}`);
         return;
       }
@@ -4107,6 +4118,7 @@
         setStatus(`Word not found: ${cleaned}`);
         return;
       }
+      state.removedWords.add(cleaned);
   
       persistWordCache();
       refreshCandidates('word removed');
@@ -4125,10 +4137,15 @@
     async function loadWords() {
       try {
         const cached = JSON.parse(localStorage.getItem(WORD_CACHE_KEY) || 'null');
-        if (cached && Array.isArray(cached.words) && cached.words.length > 3000) {
-          state.words = uniqueCaseInsensitive(cached.words);
+        if (cached && Array.isArray(cached.words) && cached.words.every(w => typeof w === 'string')) {
+          state.removedWords = new Set(Array.isArray(cached.removedWords) ? cached.removedWords.filter(w => typeof w === 'string').map(normalizeWord) : []);
+          // Old caches must not hide newer bundled entries (e.g. Spotify). Keep custom
+          // words and explicit removals; refresh the public bank once per release.
+          const updated = cached.version !== '2' || cached.bundleVersion !== SCRIPT_VERSION;
+          state.words = uniqueCaseInsensitive(updated ? [...cached.words, ...BUNDLED_WORDS] : cached.words).filter(word => !state.removedWords.has(word));
           state.wordCount = state.words.length;
           state.wordsLoaded = state.words.length > 0;
+          if (updated || cached.version !== '2') persistWordCache();
           setStatus(`Word list loaded from cache: ${state.wordCount}`);
           return;
         }
@@ -4244,54 +4261,83 @@
       return true;
     }
   
+    function hintAreaText(node, stripLabels=false) {
+      const copy=node.cloneNode(true), originalChildren=node.querySelectorAll('*'), copiedChildren=copy.querySelectorAll('*');
+      originalChildren.forEach((el,i)=>{
+        const style=getComputedStyle(el);
+        if(style.display==='none' || style.visibility==='hidden' || (stripLabels && el.matches('.word-length, .wordLength, #currentWordLength, .description')))copiedChildren[i].remove();
+      });
+      return copy.textContent || '';
+    }
+
     function findHintCandidateText() {
+      const lengths=extractWordLengthsFromHintArea();
       const hintSources = [
         state.selectors.hint,
-        querySelectorAny(['#currentWord', '.current-word', '.wordHints', '.word .hints', '.hints'], true),
-      ].filter(Boolean);
+        querySelectorAny(['#game-word .hints .container', '#currentWord', '.current-word', '.wordHints', '.word .hints', '.hints'], true),
+      ].filter(node=>node && isVisibleElement(node));
+
+      const readPattern=node=>{
+        const text=sanitizeHintText(hintAreaText(node,true)).replace(/[^a-z_\-\s]/g,' ').replace(/\s+/g,' ').trim().replace(/^guess this\s*/,'');
+        if(!isLikelyHintPattern(text))return '';
+        if(!lengths || lengths.length<2)return text;
+        const compact=text.replace(/\s/g,''), total=lengths.reduce((sum,n)=>sum+n,0);
+        // Some clients render separator positions as underscore spans until
+        // they are revealed. The length label supplies the actual word breaks.
+        const hasSeparatorSlots=compact.length===total+lengths.length-1;
+        if(compact.length!==total && !hasSeparatorSlots)return text;
+        const parts=[];let offset=0;
+        for(let i=0;i<lengths.length;i++){
+          parts.push(compact.slice(offset,offset+lengths[i]));offset+=lengths[i];
+          if(hasSeparatorSlots && i<lengths.length-1){
+            if(compact[offset]!=='_')return text;
+            offset++;
+          }
+        }
+        return parts.join(' ');
+      };
   
       for (const node of hintSources) {
-        const t = sanitizeHintText(node.textContent || '')
-          .replace(/[^a-z_\-\s]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim();
-  
-        if (isLikelyHintPattern(t)) return t;
+        const pattern=readPattern(node);
+        if(pattern)return pattern;
       }
   
       const guessLabel = Array.from(document.querySelectorAll('div,span,strong,h1,h2')).find((el) =>
-        /guess this/i.test(el.textContent || '')
+        /^guess this$/i.test((el.textContent || '').trim()) && isVisibleElement(el)
       );
   
       if (guessLabel?.parentElement) {
-        const cleaned = sanitizeHintText(guessLabel.parentElement.textContent || '')
-          .replace(/guess this/ig, '')
-          .replace(/[^a-z_\-\s]/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim();
-        if (isLikelyHintPattern(cleaned)) return cleaned;
+        const pattern=readPattern(guessLabel.parentElement);
+        if(pattern)return pattern;
       }
   
       return '';
     }
   
   
-    function extractLengthFromHintArea() {
-      const candidates = [
-        document.querySelector('#currentWordLength'),
-        document.querySelector('.word-length'),
-        document.querySelector('.wordLength'),
-        state.selectors.hint && state.selectors.hint.parentElement,
-        Array.from(document.querySelectorAll('div,span,strong')).find((el) => /guess this/i.test(el.textContent || '')),
-      ].filter(Boolean);
-  
-      for (const el of candidates) {
-        const nums = (el.textContent || '').match(/\b(\d{1,2})\b/g);
-        if (!nums || !nums.length) continue;
-        const val = parseInt(nums[nums.length - 1], 10);
-        if (val >= 2 && val <= 25) return val;
+    function extractWordLengthsFromHintArea() {
+      const parse=text=>{
+        if(!/^\d{1,2}(?:\s+\d{1,2})*$/.test(text.trim()))return null;
+        const lengths=text.trim().split(/\s+/).map(Number);
+        return lengths.every(n=>n>=1 && n<=25) && lengths.reduce((sum,n)=>sum+n,0)+lengths.length-1<=48?lengths:null;
+      };
+      // Read the dedicated label first, preserving all counts (e.g. 7 3).
+      // Hidden old labels must not masquerade as a new round's hint.
+      for(const el of document.querySelectorAll('#currentWordLength, .word-length, .wordLength')){
+        if(!isVisibleElement(el))continue;
+        const lengths=parse(el.textContent || '');if(lengths)return lengths;
       }
-  
+      const label=Array.from(document.querySelectorAll('div,span,strong')).find(el=>/^guess this$/i.test((el.textContent || '').trim()) && isVisibleElement(el));
+      const areas=[document.querySelector('#game-word'),state.selectors.hint?.parentElement,label?.parentElement];
+      for(const el of areas){
+        if(!el || !isVisibleElement(el))continue;
+        const text=hintAreaText(el).trim();
+        // Constrain fallback parsing to a compact hint area ending in counts;
+        // unrelated scores, timers and chat numbers are not length labels.
+        if(text.length>128)continue;
+        const match=text.match(/^[a-z_\-\s]*?(\d{1,2}(?:\s+\d{1,2})*)\s*$/i);
+        if(match){const lengths=parse(match[1]);if(lengths)return lengths;}
+      }
       return null;
     }
   
@@ -4384,7 +4430,7 @@
       if (isBetweenRoundOverlayVisible()) return 'between-rounds';
   
       const hint = findHintCandidateText();
-      const hasHint = Boolean(hint) || Boolean(extractLengthFromHintArea());
+      const hasHint = Boolean(hint) || Boolean(extractWordLengthsFromHintArea());
       const canTypeGuess = Boolean(input && !input.disabled && !input.readOnly && /guess/i.test(input.placeholder || ''));
   
       if (canTypeGuess && hasHint) return 'guessing';
@@ -4403,8 +4449,8 @@
       let hint = findHintCandidateText();
   
       if (!hint) {
-        const len = extractLengthFromHintArea();
-        if (len) return '_'.repeat(len);
+        const lengths = extractWordLengthsFromHintArea();
+        if (lengths) return lengths.map(n=>'_'.repeat(n)).join(' ');
         return '';
       }
   
@@ -4414,8 +4460,8 @@
         .trim();
   
       if (!hint.includes('_')) {
-        const len = extractLengthFromHintArea();
-        if (len) hint = '_'.repeat(len);
+        const lengths = extractWordLengthsFromHintArea();
+        if (lengths) hint = lengths.map(n=>'_'.repeat(n)).join(' ');
       }
   
       return hint;
@@ -4439,6 +4485,8 @@
       if (!isAutomationAllowed()) {
         state.candidates = [];
         state.queue = [];
+        wordSearch?.reset();
+        renderTopCandidates();
         renderDebug(`${reason} (${state.lastGamePhase})`);
         return;
       }
@@ -4481,7 +4529,8 @@
         candidates = candidates.filter((word) => matchesUnderscorePattern(word, hint));
       }
   
-      state.candidates = rankCandidates(uniqueCaseInsensitive(candidates), hint).slice(0, LIMITS.queueBurstLimit);
+      // Search sees the complete hint-filtered bank; only automation is burst-limited.
+      state.candidates = rankCandidates(uniqueCaseInsensitive(candidates), hint);
   
       if (state.running) {
         buildQueueFromCandidates({ preserveExisting: !hintChanged });
@@ -4507,11 +4556,11 @@
       const queue = preserveExisting ? state.queue.slice() : [];
       const queuedSet = new Set(queue);
   
-      for (const word of state.candidates) {
+      for (const word of state.candidates.slice(0, LIMITS.queueBurstLimit)) {
         const n = normalizeWord(word);
         if (!n || n.length < LIMITS.minGuessLength) continue;
         if (!isValidGuessText(n)) continue;
-        if (state.sentThisRound.has(n) || state.chatGuessedThisRound.has(n) || (state.sentAttempts.get(n) || 0) > 0) continue;
+        if (state.sentThisRound.has(n) || state.chatGuessedThisRound.has(n) || state.delivery.pending?.word === n || state.retryDelivery?.word === n) continue;
         if (state.revealedWords.has(n) || queuedSet.has(n)) continue;
         queue.push(n);
         queuedSet.add(n);
@@ -4522,6 +4571,11 @@
   
     function stopAutomation(reason = 'Stopped') {
       state.running = false;
+      const pending = state.delivery.cancel();
+      if (pending && !state.wordGuessedThisRound) restoreUnconfirmedGuess(pending);
+      stopDeliveryPoll();
+      stopCloseHitWatch();
+      state.closeHitEnabled.clear();
       if (reason === 'Stopped by user') {
         state.automationArmed = false;
         if (state.spamRecoveryTimer) {
@@ -4533,20 +4587,14 @@
         clearTimeout(state.loopTimer);
         state.loopTimer = null;
       }
-      // Clear any pending candidate render and show a "stopped" placeholder
-      // so the word list doesn't linger after the bot is halted.
+      // Stop automatic sending while keeping candidates available for explicit
+      // manual clicks, including after a spam pause.
       if (state.renderTopCandidatesRaf != null) {
         cancelAnimationFrame(state.renderTopCandidatesRaf);
         state.renderTopCandidatesRaf = null;
         state.renderTopCandidatesPending = null;
       }
-      if (state.ui?.candidateTop && !state.wordGuessedThisRound) {
-        const wrap = document.createElement('div');
-        wrap.style.cssText = 'padding:8px;text-align:center;color:#999;font-size:10px;';
-        wrap.textContent = 'Bot stopped. Click Start to resume.';
-        state.ui.candidateTop.innerHTML = '';
-        state.ui.candidateTop.appendChild(wrap);
-      }
+      if (!state.wordGuessedThisRound) renderTopCandidates();
       setStatus(reason);
       renderDebug('stopped');
       devLog('info', `Automation stopped: ${reason}`);
@@ -4566,10 +4614,74 @@
       }
     }
   
-    function canSendWithoutSpamKick() {
-      if (state.spamDetectedCount >= 2) return false;
+    function canSendWithoutSpamKick({manual=false} = {}) {
+      // The repeated-strike lock pauses automation. An explicit manual click
+      // only waits for the actual cooldown, even if Stop canceled auto-recovery.
+      if (!manual && state.spamDetectedCount >= 2) return false;
       if (Date.now() < state.spamBlockedUntil) return false;
       return true;
+    }
+
+    function stopSpamCountdown() {
+      if (state.spamCountdownTimer !== null) clearTimeout(state.spamCountdownTimer);
+      state.spamCountdownTimer = null;
+    }
+
+    function startSpamCountdown() {
+      stopSpamCountdown();
+      const update = () => {
+        state.spamCountdownTimer = null;
+        state.cooldownRemainingMs = Math.max(0, state.spamBlockedUntil - Date.now());
+        if (state.ui?.cooldown) state.ui.cooldown.textContent = `${Math.ceil(state.cooldownRemainingMs / 1000)}s`;
+        if (state.cooldownRemainingMs > 0) {
+          state.spamCountdownTimer = setTimeout(update, Math.min(250, state.cooldownRemainingMs));
+        } else if (!state.running && !state.delivery.pending && !state.wordGuessedThisRound && /spam|cooldown/i.test(state.ui?.status?.textContent || '')) {
+          setStatus('Spam cooldown over. Click a word to send; automatic guessing is stopped.');
+        }
+      };
+      update();
+    }
+
+    function stopDeliveryPoll() {
+      if (state.deliveryPollTimer) clearInterval(state.deliveryPollTimer);
+      state.deliveryPollTimer = null;
+    }
+
+    function restoreUnconfirmedGuess(attempt) {
+      if (attempt.round !== state.guessRound || state.wordGuessedThisRound) return;
+      state.retryDelivery = {word:attempt.word,noDot:attempt.noDot,round:attempt.round};
+    }
+
+    function confirmGuessDelivery(attempt) {
+      if (attempt.round !== state.guessRound) return;
+      state.sentThisRound.add(attempt.word);
+      state.lastGuess = attempt.out;
+      if (state.ui) state.ui.lastGuess.textContent = attempt.out;
+      const plain = !attempt.out.startsWith('.');
+      if (plain) state.closeHitSent.add(attempt.word);
+      if (state.retryDelivery?.word === attempt.word && (plain || !state.retryDelivery.noDot)) state.retryDelivery = null;
+      if (plain && state.closeHitPending === attempt.word) state.closeHitPending = null;
+      if (!state.delivery.pending) stopDeliveryPoll();
+      devLog('guess', `Confirmed in chat: "${attempt.out}"`);
+      setStatus(`Confirmed in chat: ${attempt.out}`);
+      renderTopCandidates();
+      if (state.running && !state.delivery.pending) scheduleNextTick(getConfiguredDelay());
+    }
+
+    function rejectGuessDelivery(attempt, reason) {
+      if (attempt.round !== state.guessRound) return;
+      stopDeliveryPoll();stopCloseHitWatch();restoreUnconfirmedGuess(attempt);
+      devLog('guess', `${reason === 'spam' ? 'Spam rejected' : 'Not confirmed'}: "${attempt.out}" — retained for retry`);
+      if (reason !== 'spam') {
+        state.spamBlockedUntil = Math.max(state.spamBlockedUntil, Date.now() + LIMITS.spamCooldownMs);
+        startSpamCountdown();
+        setStatus(`Not confirmed in chat: ${attempt.out}. Kept for retry.`, true);
+        if ((state.sentAttempts.get(attempt.word) || 0) >= LIMITS.maxRetries) {
+          state.automationArmed = false;
+          stopAutomation('No chat confirmation after retries; word kept. Click Start to retry.');
+        } else if (state.running) scheduleNextTick(LIMITS.tickPollMs);
+      }
+      renderTopCandidates();
     }
 
     function isValidGuessText(text) {
@@ -4582,10 +4694,8 @@
     }
 
     // ── Close-hit watcher ──────────────────────────────────────────────────────
-    // Activated immediately when a dot-prefixed word is sent. Polls the last 3
-    // chat DOM elements every closeHitScanMs ms for up to closeHitScanTimeout ms.
-    // Much more reliable than waiting for a chat MutationObserver delta because it
-    // reads individual message elements directly, so rapid chat can't bury the signal.
+    // Short, fast polling while a dot guess is pending. Both this watcher and
+    // the observer share the same fresh-row cursor, so history cannot replay.
     function stopCloseHitWatch() {
       if (state.closeHitWatchTimer) {
         clearInterval(state.closeHitWatchTimer);
@@ -4609,29 +4719,8 @@
       const scanMs = Math.max(LIMITS.closeHitScanMin, Math.min(LIMITS.closeHitScanMax, settings.closeHitScanMs ?? DEFAULT_SETTINGS.closeHitScanMs));
 
       const tryDetect = () => {
-        if (state.wordGuessedThisRound || state.closeHitSent.has(normalized) || !state.selectors.chat) {
-          stopCloseHitWatch();
-          return;
-        }
-        // Check last 3 chat message elements individually so rapid chat can't bury the line
-        const children = Array.from(state.selectors.chat.children).slice(-3);
-        const recentText = children.map(el => el.textContent || '').join('\n');
-        const closeMatch = recentText.match(/\s*(?:\.)?([^\s.!?,]+(?:\s+[^\s.!?,]+)*)\s+is\s+close!/i);
-        if (closeMatch) {
-          const found = normalizeWord((closeMatch[1] || '').replace(/^\.+/, ''));
-          if (found === normalized) {
-            stopCloseHitWatch();
-            devLog('chat', `Close-hit (watcher): "${cleaned}" — resending without dot`);
-            state.closeHitSent.add(normalized); // mark immediately to prevent re-detection
-            if (canSendWithoutSpamKick()) {
-              sendGuess(cleaned, { noDot: true });
-              state.closeHitPending = null;
-              renderTopCandidates();
-            } else {
-              enqueueCloseRetry(cleaned);
-            }
-          }
-        }
+        if (state.wordGuessedThisRound || state.closeHitSent.has(normalized) || !state.selectors.chat) {stopCloseHitWatch();return;}
+        scanChatMessages();
       };
 
       state.closeHitWatchTimer = setInterval(tryDetect, scanMs);
@@ -4648,14 +4737,26 @@
       if (!isValidGuessText(trimmed)) {
         return false;
       }
+      scanChatMessages();
+      if (state.wordGuessedThisRound) return false;
+      if (options.searchSelection && !eligibleSearchCandidates().some(w => normalizeWord(w) === normalizeWord(trimmed))) return false;
+      if (state.delivery.pending) {
+        setStatus(`Waiting for chat confirmation: ${state.delivery.pending.out}`);
+        return false;
+      }
       const input = state.selectors.input;
       if (!input || input.disabled || input.readOnly) {
         setStatus('Chat input not found/usable', true);
         return false;
       }
 
-      if (!canSendWithoutSpamKick()) {
-        setStatus('Blocked: spam risk (2+ detections)', true);
+      if (!canSendWithoutSpamKick({manual:!!options.manual})) {
+        const seconds = Math.ceil(Math.max(0, state.spamBlockedUntil - Date.now()) / 1000);
+        setStatus(seconds > 0 ? `Spam cooldown: ${seconds}s remaining. Guess not sent; click again when it reaches 0s.` : 'Automatic guesses paused after repeated spam. You can click a word manually.', true);
+        return false;
+      }
+      if (!state.selectors.chat || !getSelfName()) {
+        setStatus('Cannot confirm guesses: chat or your player name is missing.', true);
         return false;
       }
 
@@ -4666,18 +4767,25 @@
       } else if (out && out.startsWith('.')) {
         out = out.slice(1);
       }
+      const word = normalizeWord(out.replace(/^\./, ''));
+      if (!options.manual && (state.sentAttempts.get(word) || 0) >= LIMITS.maxRetries) {
+        state.automationArmed = false;stopAutomation('Retry limit reached; word kept. Click Start to retry.');return false;
+      }
+      const attempt = state.delivery.begin({word,out,noDot:!!options.noDot,round:state.guessRound,author:getSelfName()});
+      if (!attempt) return false;
+      state.sentAttempts.set(word, (state.sentAttempts.get(word) || 0) + 1);
+      state.closeHitEnabled.add(word);
+      stopDeliveryPoll();state.deliveryPollTimer = setInterval(scanChatMessages, 100);
+      setStatus(`Waiting for chat confirmation: ${out}`);
+      devLog('guess', `Submitted, awaiting chat: "${out}"`);
 
+      try {
       input.focus();
       setNativeValue(input, '');
       input.dispatchEvent(new Event('input', { bubbles: true }));
       setNativeValue(input, out);
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
-  
-      const enterOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true };
-      input.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
-      input.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
-      input.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
   
       const form = input.closest('form');
       if (form) {
@@ -4686,21 +4794,20 @@
         } else {
           form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
         }
-      }
-  
-      if (state.selectors.send && !state.selectors.send.disabled) {
+      } else if (state.selectors.send && !state.selectors.send.disabled) {
         state.selectors.send.click();
+      } else {
+        input.dispatchEvent(new KeyboardEvent('keydown', { key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true }));
       }
-  
-      state.lastGuess = out;
-      state.ui.lastGuess.textContent = out || '-';
-      state.sentThisRound.add(normalizeWord(out.replace(/^\./, '')));
-      devLog('guess', `Sent: "${out}"`);
+      } catch (error) {
+        state.delivery.reject('dispatch');
+        setStatus('Guess submission failed; kept for retry: ' + error.message, true);return false;
+      }
 
       // If we just sent a dot-prefixed word, immediately start the dedicated close-hit
       // watcher. It polls individual chat DOM elements every closeHitScanMs ms so it
       // can't miss the ".word is close!" message even when chat is moving fast.
-      if (settings.dotPrefix && !options.noDot && out.startsWith('.')) {
+      if (settings.dotPrefix && !options.noDot && out.startsWith('.') && state.delivery.pending === attempt) {
         startCloseHitWatch(trimmed);
       }
 
@@ -4750,6 +4857,10 @@
       if (!state.running) return;
       if (state.wordGuessedThisRound) return;
       const delay = getConfiguredDelay();
+      if (state.delivery.pending) {
+        setStatus(`Waiting for chat confirmation: ${state.delivery.pending.out}`);
+        scheduleNextTick(LIMITS.tickPollMs);return;
+      }
   
       if (!canSendWithoutSpamKick()) {
         state.cooldownRemainingMs = state.spamBlockedUntil > Date.now() ? Math.max(0, state.spamBlockedUntil - Date.now()) : 0;
@@ -4768,12 +4879,17 @@
         return;
       }
   
-      if (state.closeHitPending) {
+      if (state.retryDelivery) {
+        const retry = state.retryDelivery;
+        if (retry.round !== state.guessRound || state.revealedWords.has(retry.word) || (!retry.noDot && state.sentThisRound.has(retry.word))) {
+          state.retryDelivery = null;
+        } else if (sendGuess(retry.word, {noDot:retry.noDot})) {
+          if (state.retryDelivery === retry) state.retryDelivery = null;
+        }
+      } else if (state.closeHitPending) {
         const word = state.closeHitPending;
-        state.closeHitPending = null;
         if (sendGuess(word, { noDot: true })) {
-          state.closeHitSent.add(normalizeWord(word));
-          setStatus(`Close-hit retry sent (no dot): ${word}`);
+          state.closeHitPending = null;
         }
       } else {
         let next = state.queue.shift();
@@ -4782,7 +4898,8 @@
           !next.trim() ||
           !isValidGuessText(next) ||
           state.revealedWords.has(normalizeWord(next)) ||
-          state.sentThisRound.has(normalizeWord(next))
+          state.sentThisRound.has(normalizeWord(next)) ||
+          state.chatGuessedThisRound.has(normalizeWord(next))
         )) {
           next = state.queue.shift();
         }
@@ -4794,21 +4911,20 @@
           return;
         }
 
-        state.sentAttempts.set(next, (state.sentAttempts.get(next) || 0) + 1);
         if (sendGuess(next)) {
-          setStatus(`Sent guess: ${settings.dotPrefix ? '.' + next : next}`);
           renderTopCandidates();
         } else {
-          setStatus(`Send failed, skipped: ${next}`, true);
+          if (!state.sentThisRound.has(normalizeWord(next))) state.queue.unshift(next);
         }
       }
   
       renderDebug('tick');
-      scheduleNextTick(immediate ? delay : delay);
+      scheduleNextTick(state.delivery.pending ? delay : Math.max(delay, LIMITS.tickPollMs));
     }
   
   
-    function startAutomation() {
+    function startAutomation(options = {}) {
+      if (state.running) return;
       if (!state.wordsLoaded) {
         setStatus('Words still loading...', true);
         return;
@@ -4817,6 +4933,7 @@
         state.spamDetectedCount = 0;
         state.spamBlockedUntil = 0;
         state.cooldownRemainingMs = 0;
+        stopSpamCountdown();
         if (state.ui && state.ui.cooldown) state.ui.cooldown.textContent = '0s';
       }
       if (!state.selectors.input) {
@@ -4831,15 +4948,7 @@
       state.running = true;
       state.automationArmed = true;
       state.queue = [];
-      state.sentAttempts.clear();
-      state.closeHitPending = null;
-      // Anchor close-hit scanning to the current chat position so the poller and
-      // round-scan fallback never look at messages from before the bot was started.
-      if (state.selectors.chat) {
-        const chatLen = (state.selectors.chat.textContent || '').length;
-        if (chatLen > state.roundStartChatLen) state.roundStartChatLen = chatLen;
-        if (chatLen > state.lastChatTextLen) state.lastChatTextLen = chatLen;
-      }
+      if (!options.resume) state.sentAttempts.clear();
       devLog('info', `Automation started — ${state.candidates.length} candidates, hint: "${state.currentHintRaw || '—'}"`);
       refreshCandidates('start');
       setStatus('Running');
@@ -4849,15 +4958,14 @@
     }
   
     function resetRoundState(reason = 'Round reset') {
+      wordSearch?.reset();
       if (state.loopTimer) {
         clearTimeout(state.loopTimer);
         state.loopTimer = null;
       }
       // Stop any in-flight close-hit watcher so it doesn't fire into the new round.
       stopCloseHitWatch();
-      // Mark where in the chat this round starts so the close-hit fallback only
-      // scans the current round's messages and won't re-fire on previous rounds.
-      state.roundStartChatLen = state.lastChatTextLen;
+      stopDeliveryPoll();state.delivery.reset();state.guessRound++;state.retryDelivery=null;state.closeHitEnabled.clear();
       state.sentThisRound.clear();
       state.chatGuessedThisRound.clear();
       // Carry revealed words into sentThisRound so they stay blocked for the new round's queue builds
@@ -4884,10 +4992,17 @@
     }
 
     function startNewRound() {
+      // Keep the search through hint reveals and retries, but begin each drawing
+      // round with the full eligible bank. resetRoundState cancels old AI replies.
+      const searchInput=state.ui?.panel.querySelector('#sag-search-input');
+      if(searchInput)searchInput.value='';
+      const searchHint=state.ui?.panel.querySelector('#sag-search-hint');
+      if(searchHint)searchHint.style.display='none';
       state.wordGuessedThisRound = false;
       state.spamDetectedCount = 0;
       state.spamBlockedUntil = 0;
       state.cooldownRemainingMs = 0;
+      stopSpamCountdown();
       if (state.spamRecoveryTimer) {
         clearTimeout(state.spamRecoveryTimer);
         state.spamRecoveryTimer = null;
@@ -4896,18 +5011,35 @@
       resetRoundState('New round');
     }
   
-    function updateChatGuessedWords(fullText) {
-      const text = (fullText || '').slice(state.roundStartChatLen || 0);
-      if (!text.trim()) return false;
+    function readChatMessages() {
+      if (!state.selectors.chat) return [];
+      return Array.from(state.selectors.chat.children).map(node => {
+        const nameNode=node.querySelector('b'),span=node.querySelector('span');
+        const label=(nameNode?.textContent||'').trim();
+        if (nameNode && /:$/.test(label)) return {node,author:label.slice(0,-1).trim(),text:span?.textContent||'',system:false};
+        const text=(node.textContent||'').trim();
+        if (!nameNode) {const match=text.match(/^\s*([^:]+):\s*(.+)$/);if(match)return {node,author:match[1],text:match[2],system:false};}
+        return {node,author:'',text,system:true};
+      });
+    }
+
+    function scanChatMessages(records = []) {
+      if (!state.selectors.chat) return;
+      const appended=new Set();
+      for(const record of records)if(record.type==='childList'&&!record.removedNodes.length)for(const node of record.addedNodes)if(node.parentElement===state.selectors.chat)appended.add(node);
+      state.delivery.scan(readChatMessages(),{appended,selfName:getSelfName(),onMessage:message=>{
+        if(message.system)parseChatSignals(message.text);
+        else if(updateChatGuessedWords([message]))renderTopCandidates();
+      }});
+    }
+
+    function updateChatGuessedWords(messages) {
       let changed = false;
-      const lines = text.split(/\r?\n/);
-      for (const line of lines) {
-        const m = line.match(/^\s*[^:]+:\s*(.+)$/);
-        if (!m) continue;
-        let msg = (m[1] || '').trim().replace(/[.,!?]+$/, '');
-        const singleWord = msg.split(/\s+/)[0] || msg;
-        if (singleWord.length >= LIMITS.minGuessLength && /^[a-zA-Z]+$/.test(singleWord)) {
-          const n = normalizeWord(singleWord);
+      for (const message of messages) {
+        if (message.system) continue;
+        const msg = (message.text || '').trim().replace(/^\./,'');
+        if (isValidGuessText(msg)) {
+          const n = normalizeWord(msg);
           if (n && !state.chatGuessedThisRound.has(n)) {
             state.chatGuessedThisRound.add(n);
             changed = true;
@@ -4919,26 +5051,16 @@
 
     function parseChatSignals(rootText) {
       const fullText = rootText || '';
-
-      if (updateChatGuessedWords(fullText)) renderTopCandidates();
-
-      if (fullText.length < state.lastChatTextLen) {
-        // Chat was cleared or re-rendered — reset position without reprocessing history
-        state.lastChatTextLen = fullText.length;
-        return;
-      }
-  
-      const delta = fullText.slice(state.lastChatTextLen);
-      state.lastChatTextLen = fullText.length;
-      const recent = delta.toLowerCase();
+      const recent = fullText.toLowerCase();
       if (!recent.trim()) return;
   
-      if (/spam detected|sending messages too quickly/.test(recent)) {
+      if (/^spam detected\b|^spam erkannt!|^you're sending messages too quickly/.test(recent)) {
         state.spamDetectedCount = (state.spamDetectedCount || 0) + 1;
-        // Exponential backoff: 3s → 7s → stop.  Each strike doubles the wait so the
+        // Exponential backoff: 4s → 8s → stop. Each strike doubles the wait so the
         // bot can't recover quickly enough to trigger the server kick on the 3rd strike.
-        const backoff = Math.min(2000 * (1 << state.spamDetectedCount), 12000); // 4s, 8s, 12s cap
+        const backoff = Math.min(2000 * 2 ** Math.min(state.spamDetectedCount, 3), 12000); // 4s, 8s, 12s cap; no shift overflow
         state.spamBlockedUntil = Date.now() + backoff;
+        startSpamCountdown();
         if (state.spamRecoveryTimer) {
           clearTimeout(state.spamRecoveryTimer);
           state.spamRecoveryTimer = null;
@@ -4947,13 +5069,16 @@
         state.spamRecoveryTimer = setTimeout(() => {
           state.spamRecoveryTimer = null;
           state.spamDetectedCount = 0;
-          state.spamBlockedUntil = 0;
-          state.cooldownRemainingMs = 0;
           devLog('round', 'Spam cooldown over — reset; you can start again or auto-resume');
-          setStatus('Spam cooldown over; you can start again.');
-          if (state.ui && state.ui.cooldown) state.ui.cooldown.textContent = '0s';
-          if (state.automationArmed && !state.running) {
-            startAutomation();
+          // A manual attempt may have timed out during this recovery buffer.
+          // Never erase its newer deadline or replace a pending confirmation.
+          if (Date.now() >= state.spamBlockedUntil) {
+            state.spamBlockedUntil = 0;state.cooldownRemainingMs = 0;stopSpamCountdown();
+            if (!state.delivery.pending && !state.wordGuessedThisRound) setStatus('Spam cooldown over. Click a word to send, or Start for automatic guesses.');
+            if (state.ui?.cooldown) state.ui.cooldown.textContent = '0s';
+          } else startSpamCountdown();
+          if (state.automationArmed && !state.running && !state.wordGuessedThisRound) {
+            startAutomation({resume:true});
             setStatus('Running (resumed after spam cooldown)');
           }
         }, backoff + recoveryBufferMs);
@@ -4962,8 +5087,9 @@
           devLog('round', `Spam risk: ${state.spamDetectedCount} detections — stopping to avoid kick`);
           stopAutomation('Spam risk: stopped to avoid kick');
         } else {
-          setStatus(`Running (paused: spam cooldown ${Math.ceil(backoff / 1000)}s)`);
+          setStatus(`${state.running?'Running (paused':'Guess rejected'}: spam cooldown ${Math.ceil(backoff / 1000)}s; word kept for retry${state.running?')':''}`);
         }
+        state.cooldownRemainingMs=backoff;renderDebug('spam rejected; unconfirmed guess retained');
         return;
       }
   
@@ -4995,6 +5121,7 @@
         }
         state.wordGuessedThisRound = true;
         state.wordGuessedAt = Date.now();
+        state.delivery.cancel();stopDeliveryPoll();stopCloseHitWatch();state.retryDelivery=null;state.closeHitPending=null;state.closeHitEnabled.clear();
         devLog('round', 'Round ended — "the word was" / "round over" detected');
         hideCandidates();
         if (/\bis drawing now\b|\bis choosing a word\b|\bchoose a word\b|\bpick a word\b/.test(recent)) {
@@ -5004,23 +5131,17 @@
       }
   
       // ── Close-hit detection ──────────────────────────────────────────────────
-      // IMPORTANT: this block runs BEFORE the ownSolved check so that when Skribbl
-      // delivers ".word is close!" and "bugatti guessed the word!" in the SAME DOM
-      // mutation batch, we still process (and send) the close-hit resend first.
-      // tryCloseHitSend guards against sending after round end via wordGuessedThisRound.
+      // Process fresh rows in their original order, including close-hit replies
+      // and solves arriving in the same mutation batch.
       function tryCloseHitSend(text) {
         if (state.wordGuessedThisRound) return false;
         const close = (text || '').match(/\s*(?:\.)?([^\s.!?,]+(?:\s+[^\s.!?,]+)*)\s+is\s+close!/i);
         if (!close || !close[1]) return false;
         const word = close[1].trim().replace(/^\.+/, '');
         const normalized = normalizeWord(word);
-        if (!normalized || normalized.length < LIMITS.minGuessLength || !isValidGuessText(word) || state.closeHitSent.has(normalized)) return false;
+        if (!settings.dotPrefix || !state.closeHitEnabled.has(normalized) || !state.delivery.confirmed.has('.'+normalized) || !normalized || normalized.length < LIMITS.minGuessLength || !isValidGuessText(word) || state.closeHitSent.has(normalized)) return false;
         devLog('chat', `Close-hit detected: "${word}" — resending without dot`);
-        // Mark as handled immediately so no other detector re-fires for this word,
-        // even if the send is temporarily blocked by spam cooldown.
-        state.closeHitSent.add(normalized);
-        if (canSendWithoutSpamKick()) {
-          sendGuess(word, { noDot: true });
+        if (canSendWithoutSpamKick() && !state.delivery.pending && sendGuess(word, { noDot: true })) {
           state.closeHitPending = null;
           renderTopCandidates();
         } else {
@@ -5029,35 +5150,11 @@
         return true;
       }
 
-      // Primary close-hit check: the current delta.
+      // Only this fresh system row can trigger a close-hit retry.
       tryCloseHitSend(recent);
 
-      // Round-chat fallback: scan everything since this round started for any close-hit
-      // that landed in a previously skipped batch. roundStartChatLen keeps this safe
-      // (we never look at previous rounds' history).
-      if (!state.wordGuessedThisRound) {
-        const roundChat = fullText.slice(state.roundStartChatLen);
-        if (roundChat.length > recent.length) {
-          const closeRe = /\s*(?:\.)?([^\s.!?,]+(?:\s+[^\s.!?,]+)*)\s+is\s+close!/gi;
-          let cm;
-          while ((cm = closeRe.exec(roundChat)) !== null) {
-            const w = cm[1].trim().replace(/^\.+/, '');
-            const n = normalizeWord(w);
-            if (n && n.length >= LIMITS.minGuessLength && isValidGuessText(w) && !state.closeHitSent.has(n)) {
-              devLog('chat', `Close-hit detected (round-scan): "${w}" — resending without dot`);
-              state.closeHitSent.add(n); // mark immediately to prevent re-detection
-              if (canSendWithoutSpamKick()) {
-                sendGuess(w, { noDot: true });
-                state.closeHitPending = null;
-                renderTopCandidates();
-              } else {
-                enqueueCloseRetry(w);
-              }
-              break;
-            }
-          }
-        }
-      }
+      // All new message elements are scanned, including messages no longer in
+      // the last few rows. Never replay a prior round's close-hit history.
       // ── End close-hit detection ───────────────────────────────────────────────
 
       const ownName = getSelfName();
@@ -5084,9 +5181,8 @@
         state.wordGuessedThisRound = true;
         state.wordGuessedAt = Date.now();
         hideCandidates();
-        if (state.running) {
-          stopAutomation('Solved word detected, stopped');
-        }
+        state.retryDelivery=null;state.closeHitPending=null;
+        stopAutomation(ownSolved ? 'Solved word detected, stopped' : 'Your drawing turn, stopped');
         // If the next round's transition signal arrived in the SAME delta (common when
         // guessing + "X is drawing now!" are batched), process it before returning so
         // the new round isn't silently missed.
@@ -5108,15 +5204,6 @@
           }
         }
         startNewRound();
-      } else if (state.wordGuessedThisRound) {
-        // Fallback: scan this round's full chat for a transition signal that may have been
-        // missed in a previous delta batch (same pattern as the close-hit fallback).
-        // Safe because roundStartChatLen is reset each new round.
-        const roundChat = fullText.slice(state.roundStartChatLen);
-        if (roundChat.length > recent.length && transitionRe.test(roundChat)) {
-          devLog('round', 'Transition fallback: found missed "is drawing now" in round chat');
-          startNewRound();
-        }
       }
 
     }
@@ -5149,6 +5236,8 @@
     }
   
     function hideCandidates() {
+      const searchStatus=state.ui?.panel.querySelector('#sag-search-status');
+      if(searchStatus)searchStatus.hidden=true;
       if (state.renderTopCandidatesRaf != null) {
         cancelAnimationFrame(state.renderTopCandidatesRaf);
         state.renderTopCandidatesRaf = null;
@@ -5173,16 +5262,73 @@
       }
     }
 
-    function filterCandidates(query) {
-      const alreadyUsed = (w) => state.sentThisRound.has(normalizeWord(w)) || state.chatGuessedThisRound.has(normalizeWord(w));
-      if (!query.trim()) {
-        return state.candidates.filter(w => !alreadyUsed(w)).slice(0, LIMITS.candidatePreview);
+    async function requestSearchService(action, data, signal) {
+      if (signal.aborted) throw new DOMException('Stopped', 'AbortError');
+      const health=action==='aiHealth';
+      if (!globalThis.chrome?.runtime?.id) {
+        // Local test viewer only. Never fetch loopback from an arbitrary website.
+        if (!['127.0.0.1','localhost'].includes(location.hostname)) throw new Error('Reload the Skribbl tab to reconnect the extension.');
+        const response = await fetch(health?'/health':'/api/word-search', {...(health?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}),signal:AbortSignal.any([signal,AbortSignal.timeout(30000)])});
+        const body = await response.json();if(!response.ok)throw new Error(body.error || 'Local service failed ('+response.status+')');return health?{health:body}:body;
       }
-      const q = query.toLowerCase();
-      return state.candidates.filter(word => {
-        const normalized = normalizeWord(word);
-        return word.toLowerCase().includes(q) && !state.sentThisRound.has(normalized) && !state.chatGuessedThisRound.has(normalized);
-      }).slice(0, LIMITS.candidatePreview);
+      const id = crypto.randomUUID();
+      const cancel = () => { try { chrome.runtime.sendMessage({action:'aiCancel',id}).catch(()=>{}); } catch (_) {} };
+      signal.addEventListener('abort',cancel,{once:true});
+      try {
+        const response = await chrome.runtime.sendMessage({action,id,...data});
+        if(!response?.ok)throw new Error(response?.error || 'Local service did not respond');return response;
+      } catch(error) {
+        if(/extension context invalidated/i.test(error.message))throw new Error('Refresh the Skribbl tab to reconnect the extension.');throw error;
+      } finally { signal.removeEventListener('abort',cancel); }
+    }
+    const requestWordSearch=(query,candidates,signal)=>requestSearchService('aiWordSearch',{query,candidates},signal);
+    const wordSearch = globalThis.SAGWordSearch ? new SAGWordSearch.Controller({request:requestWordSearch,onUpdate:()=>renderTopCandidates()}) : null;
+    let searchReadiness='',searchReadinessGeneration=0,searchReadinessController=null,searchReadinessTimer=null;
+    function monitorSearchReadiness() {
+      const generation=++searchReadinessGeneration;
+      clearTimeout(searchReadinessTimer);searchReadinessController?.abort();searchReadiness='';
+      if(!settings.relatedWords || !wordSearch)return;
+      const controller=new AbortController();searchReadinessController=controller;
+      const poll=async()=>{
+        try{
+          const response=await requestSearchService('aiHealth',{},controller.signal);
+          if(generation!==searchReadinessGeneration || controller.signal.aborted)return;
+          const health=response.health?.wordSearch;
+          if(!health)return;
+          if(health.warming){
+            searchReadiness='Warming up local AI…'+(health.totalWords?` ${health.preloadedWords||0}/${health.totalWords} words`:'');
+            searchReadinessTimer=setTimeout(poll,1000);
+          }else if(health.ready){
+            searchReadiness=health.preloadState==='ready'?'Local AI ready · preloaded':'Local AI ready';
+            if(wordSearch.status.startsWith('AI unavailable') && /busy|timed out/i.test(wordSearch.status))wordSearch.reset();
+          }else if(health.error){
+            searchReadiness='AI unavailable—showing text/category matches. '+health.error;
+          }else if(health.installed){
+            searchReadiness='Local AI installed · restart the updated service to preload.';
+          }
+        }catch(error){
+          if(generation!==searchReadinessGeneration || controller.signal.aborted)return;
+          searchReadiness='AI unavailable—showing text/category matches. '+error.message;
+        }
+        renderTopCandidates();
+      };
+      poll();
+    }
+    function eligibleSearchCandidates() {
+      const alreadyUsed = (w) => state.sentThisRound.has(normalizeWord(w)) || state.chatGuessedThisRound.has(normalizeWord(w));
+      return state.wordGuessedThisRound ? [] : state.candidates.filter(w => !alreadyUsed(w));
+    }
+    function filterCandidates(query) {
+      const eligible=eligibleSearchCandidates();
+      if (!wordSearch) return eligible.filter(w=>w.toLowerCase().includes(query.trim().toLowerCase()));
+      const matches=wordSearch.search(query,eligible,{related:settings.relatedWords,closestFirst:settings.searchClosestFirst,context:state.guessRound+':'+state.lastProcessedHint});
+      state.searchMatches=new Map(matches.map(match=>[match.word,match]));
+      const status=state.ui?.panel.querySelector('#sag-search-status');
+      // Service health can finish before the game supplies any hint. Until then
+      // there is no search to fail or fall back from; show the waiting state.
+      const message=!state.currentUnderscorePattern?'':searchReadiness.startsWith('Warming up') && wordSearch.status.startsWith('Loading AI')?searchReadiness:wordSearch.status||(settings.relatedWords?searchReadiness:'');
+      if(status){status.textContent=message;status.hidden=!message;status.style.color=message.startsWith('AI unavailable')?'#9a3412':'#475569';}
+      return matches.map(match=>match.word);
     }
 
     function measureWidestCharWidthPx() {
@@ -5216,14 +5362,16 @@
     function renderTopCandidatesImmediate(filteredCandidates, keepSearchActive) {
       if (!state.ui?.candidateTop) return;
       if (state.wordGuessedThisRound) {
+        wordSearch?.reset();
         hideCandidates();
         return;
       }
       // Show suggested words even when bot is stopped so the user can click to send guesses.
 
-      const candidates = filteredCandidates || filterCandidates('');
+      const candidates = filteredCandidates || filterCandidates(state.ui.panel.querySelector('#sag-search-input')?.value || '');
       if (!candidates.length) {
-        state.ui.candidateTop.innerHTML = '<div style="padding:8px;text-align:center;color:#999;font-size:10px;">No matches</div>';
+        const emptyText=state.currentUnderscorePattern?'No matches':'Waiting for hint…';
+        state.ui.candidateTop.innerHTML = `<div style="padding:8px;text-align:center;color:#999;font-size:10px;">${emptyText}</div>`;
         const wrap = state.ui.candidateTop.parentElement;
         if (wrap && wrap.id === 'sag-candidate-wrap' && typeof fitPanelHeightToContent === 'function') {
           const minH = 80, maxH = 400;
@@ -5267,19 +5415,29 @@
         box.style.cssText = `padding:${padding};font-size:${minFontPx}px;border:1px solid #cbd5e1;border-radius:3px;background:#f8fafc;cursor:pointer;${wrapStyle}text-align:center;line-height:1.2;color:#111827;font-weight:500;min-height:${minHeight};`;
         box.textContent = word;
         box.title = `${index + 1}. ${word}`;
+        const match = settings.relatedWords && state.searchMatches.get(word);
+        let baseBackground='#f8fafc';
+        if(match?.reason){
+          const colors=SAGWordSearch.indicator(match);baseBackground=colors.background;
+          box.style.setProperty('background',baseBackground,'important');box.style.setProperty('border-left','4px solid '+colors.border,'important');
+          box.title+=' — '+match.reason;box.setAttribute('aria-label',word+' — '+match.reason);
+          box.dataset.match=match.reason;
+        }
         box.dataset.wordLength = String(wordLength);
         box.dataset.allowWrap = allowWrap ? '1' : '0';
+        if (state.delivery.pending?.word === normalizeWord(word)) {box.disabled=true;box.title='Waiting for confirmation in your chat';}
 
         box.addEventListener('mouseenter', () => {
-          box.style.background = '#e5e7eb';
+          box.style.setProperty('background','#e5e7eb','important');
         });
         box.addEventListener('mouseleave', () => {
-          box.style.background = '#f8fafc';
+          box.style.setProperty('background',baseBackground,'important');
         });
         
         box.addEventListener('click', () => {
-          sendGuess(word);
-          state.sentThisRound.add(normalizeWord(word));
+          const query=state.ui.panel.querySelector('#sag-search-input')?.value||'';
+          if(!filterCandidates(query).includes(word)){renderTopCandidates();return;}
+          sendGuess(word, {manual:true,searchSelection:true});
           // Reset the automation timer so the next auto-send is exactly one delay after
           // this click — prevents both immediate double-fires and overly long gaps.
           if (state.running) {
@@ -5327,7 +5485,9 @@
       }
 
       if (typeof ResizeObserver !== 'undefined') {
+        state.candidateResizeObserver?.disconnect();
         const ro = new ResizeObserver(() => runFitAfterLayout());
+        state.candidateResizeObserver=ro;
         ro.observe(container);
       }
 
@@ -5359,12 +5519,9 @@
       }
   
       if (state.selectors.chat) {
-        state.observers.chat = new MutationObserver(() => {
-          const text = state.selectors.chat.textContent || '';
-          parseChatSignals(text);
-        });
+        state.observers.chat = new MutationObserver(records => scanChatMessages(records));
         state.observers.chat.observe(state.selectors.chat, { childList: true, subtree: true, characterData: true });
-        updateChatGuessedWords(state.selectors.chat.textContent || '');
+        const messages=readChatMessages();state.delivery.seed(messages);updateChatGuessedWords(messages);
         renderTopCandidates();
       }
   
@@ -5416,6 +5573,7 @@
       state.ui.mode.textContent = state.running ? 'running' : 'stopped';
       state.ui.phase.textContent = state.lastGamePhase || 'unknown';
       state.ui.closeState.textContent = state.closeHitPending ? `pending: ${state.closeHitPending}` : 'none';
+      state.cooldownRemainingMs = Math.max(0, state.spamBlockedUntil - Date.now());
       state.ui.cooldown.textContent = state.cooldownRemainingMs > 0 ? `${Math.ceil(state.cooldownRemainingMs / 1000)}s` : '0s';
       state.ui.context.textContent = context;
       // Compact hint bar: "_t____ (1t5)"
@@ -6068,7 +6226,14 @@
           </div>
 
           <div id="sag-search-section" style="margin-bottom:6px;">
-            <input id="sag-search-input" type="text" placeholder="Search words (type 1-9 or Enter to send)" />
+            <input id="sag-search-input" type="text" maxlength="128" placeholder="Search words (type 1-9 or Enter to send)" />
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:11px;margin:5px 0;">
+              <label><input id="sag-related-words" type="checkbox" ${settings.relatedWords?'checked':''} /> Related words</label>
+              <label><input id="sag-search-closest" type="checkbox" ${settings.searchClosestFirst?'checked':''} /> Closest first</label>
+              <button id="sag-search-setup" type="button" style="padding:2px 5px;font-size:10px;" title="Enable access to the local AI service">Local AI setup</button>
+            </div>
+            <div id="sag-search-status" role="status" style="font-size:10px;margin:3px 0;overflow-wrap:anywhere;" hidden></div>
+            <div id="sag-search-legend" style="font-size:10px;color:#475569;margin:3px 0;" ${settings.relatedWords?'':'hidden'}>Green: strongest · yellow: related · red: weaker. Hover for why.</div>
             <div id="sag-search-hint" style="display:none;">Press 1-9 for first 9 results, Enter for first result</div>
             <div id="sag-candidate-wrap" style="position:relative;height:186px;min-height:80px;max-height:400px;">
               <div id="sag-candidate-top" style="height:100%;overflow:auto;box-sizing:border-box;">-</div>
@@ -6144,6 +6309,11 @@
                 </div>
               </div>
               <div id="sag-drawer" style="display:none;border:none;border-top:none;border-radius:0;padding:10px;background:#fff;margin:0;">
+            <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;font-size:12px;">Drawing mode
+              <select id="sag-drawer-engine" style="padding:5px;border:1px solid #cbd5e1;border-radius:6px;"><option value="colors">Colors + outlines (new)</option><option value="legacy">Legacy modes</option></select>
+            </label>
+            <div id="sag-drawer-studio"></div>
+            <div id="sag-drawer-legacy" style="display:none;">
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
               <button id="sag-drawer-process" style="padding:6px 12px;font-size:11px;background:#2563eb;border:1px solid #1d4ed8;border-radius:6px;cursor:pointer;font-weight:600;color:#fff;" disabled>Process image</button>
               <button id="sag-drawer-start" style="padding:6px 12px;font-size:11px;background:#16a34a;border:1px solid #15803d;border-radius:6px;cursor:pointer;font-weight:600;color:#fff;" disabled>Start drawing</button>
@@ -6156,6 +6326,41 @@
             </div>
             <canvas id="sag-drawer-preview" width="200" height="150" style="display:none;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:8px;max-width:100%;background:#fff;"></canvas>
             <div style="font-size:10px;color:#6b7280;margin-bottom:8px;padding:6px 8px;background:#f0f9ff;border-radius:4px;border-left:3px solid #0ea5e9;">Process image uses <strong>Density</strong> and <strong>BG removal</strong> below. Change them then click Process again.</div>
+            <div style="margin-bottom:8px;">
+              <label style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;">
+                <span style="font-size:11px;font-weight:600;color:#374151;">Drawing style</span>
+                <select id="sag-drawer-style" style="font-size:11px;padding:4px;border:1px solid #d1d5db;border-radius:4px;background:#fff;">
+                  <option value="realistic">Realistic</option>
+                  <option value="imitate">Imitate</option>
+                </select>
+              </label>
+              <div style="font-size:9px;color:#6b7280;margin-top:1px;">Imitate = outline then shapes, fewer strokes.</div>
+            </div>
+            <div id="sag-drawer-imitate-sub-wrap" style="margin-bottom:8px;display:none;">
+              <label style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;">
+                <span style="font-size:11px;font-weight:600;color:#374151;">Imitate mode</span>
+                <select id="sag-drawer-imitate-sub" style="font-size:11px;padding:4px;border:1px solid #d1d5db;border-radius:4px;background:#fff;">
+                  <option value="photo">Photo (current)</option>
+                  <option value="edges">Photo (Canny edges)</option>
+                  <option value="lineart">Line art</option>
+                </select>
+              </label>
+              <div style="font-size:9px;color:#6b7280;margin-top:1px;">Canny edges = sharper lines. Line art = black-on-white image.</div>
+            </div>
+            <div id="sag-drawer-imitate-more-wrap" style="margin-bottom:8px;display:none;">
+              <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#374151;cursor:pointer;" title="Add slight line wobble and occasionally undo a stroke (CDP only).">
+                <input id="sag-drawer-imitate-more" type="checkbox" style="accent-color:#2563eb;" />
+                <span>Even more imitate</span>
+              </label>
+              <div style="font-size:9px;color:#6b7280;margin-top:1px;">Wobble and occasional undo (CDP only).</div>
+            </div>
+            <div id="sag-drawer-imitate-speed-wrap" style="margin-bottom:8px;display:none;">
+              <label style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;">
+                <span style="font-size:11px;font-weight:600;color:#374151;">Imitate speed</span>
+                <input id="sag-drawer-imitate-delay" type="number" min="0" max="500" step="10" value="50" style="font-size:11px;width:70px;padding:4px;border:1px solid #d1d5db;border-radius:4px;" title="Delay (ms) before next stroke" />
+              </label>
+              <div style="font-size:9px;color:#6b7280;margin-top:1px;">ms per stroke (0 = use chunk delay). Higher = slower.</div>
+            </div>
             <div style="margin-bottom:8px;">
               <label style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px;">
                 <span style="font-size:11px;font-weight:600;color:#374151;">Density</span>
@@ -6222,6 +6427,7 @@
                 <div id="sag-drawer-bar" style="background:linear-gradient(90deg,#34d399,#10b981);height:100%;width:0%;transition:width 0.15s;"></div>
               </div>
               <div id="sag-drawer-pct" style="font-size:11px;text-align:center;color:#0369a1;margin-top:4px;font-weight:600;">0%</div>
+            </div>
             </div>
               </div>
             </div>
@@ -6479,57 +6685,38 @@
 
       const searchInput = panel.querySelector('#sag-search-input');
       const searchHint = panel.querySelector('#sag-search-hint');
-      let currentSearchResults = [];
-      let lastSearchQuery = '';
-
-      searchInput.addEventListener('input', (e) => {
-        const query = e.target.value;
-        lastSearchQuery = query;
-        if (query.trim()) {
-          currentSearchResults = filterCandidates(query);
-          renderTopCandidates(currentSearchResults);
-          searchHint.style.display = 'block';
-        } else {
-          currentSearchResults = [];
-          lastSearchQuery = '';
-          renderTopCandidates();
-          searchHint.style.display = 'none';
-        }
+      searchInput.addEventListener('input', () => {
+        // Match immediately; debounce only inference, and discard superseded work.
+        renderTopCandidates(filterCandidates(searchInput.value));
+        searchHint.style.display=searchInput.value.trim()?'block':'none';
       });
-
-      searchInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && currentSearchResults.length > 0) {
-          e.preventDefault();
-          const word = currentSearchResults[0];
-          state.sentThisRound.add(normalizeWord(word));
-          sendGuess(word);
-          setTimeout(() => {
-            searchInput.focus();
-            if (lastSearchQuery) {
-              searchInput.value = lastSearchQuery;
-              currentSearchResults = filterCandidates(lastSearchQuery);
-              renderTopCandidates(currentSearchResults);
-              searchHint.style.display = 'block';
-            }
-          }, 100);
-        } else if (e.key >= '1' && e.key <= '9' && currentSearchResults.length > 0) {
-          e.preventDefault();
-          const index = parseInt(e.key) - 1;
-          if (index < currentSearchResults.length) {
-            const word = currentSearchResults[index];
-            state.sentThisRound.add(normalizeWord(word));
-            sendGuess(word);
-            setTimeout(() => {
-              searchInput.focus();
-              if (lastSearchQuery) {
-                searchInput.value = lastSearchQuery;
-                currentSearchResults = filterCandidates(lastSearchQuery);
-                renderTopCandidates(currentSearchResults);
-                searchHint.style.display = 'block';
-              }
-            }, 100);
-          }
-        }
+      searchInput.addEventListener('keydown', e => {
+        if(e.isComposing || !searchInput.value.trim())return;
+        const index=e.key==='Enter'?0:/^[1-9]$/.test(e.key)?Number(e.key)-1:-1;
+        if(index<0)return;
+        e.preventDefault();
+        const matches=filterCandidates(searchInput.value);
+        // Synchronize visible order and shortcuts even between an AI update and its RAF.
+        renderTopCandidatesImmediate(matches,true);
+        if(matches[index])sendGuess(matches[index],{manual:true,searchSelection:true});
+        searchInput.focus();renderTopCandidates();
+      });
+      for(const [id,key] of [['#sag-related-words','relatedWords'],['#sag-search-closest','searchClosestFirst']]){
+        panel.querySelector(id).addEventListener('change',e=>{
+          settings[key]=e.target.checked;saveSettings();
+          panel.querySelector('#sag-search-legend').hidden=!settings.relatedWords;
+          if(key==='relatedWords')monitorSearchReadiness();
+          renderTopCandidates();
+        });
+      }
+      panel.querySelector('#sag-search-setup').addEventListener('click',async()=>{
+        const status=panel.querySelector('#sag-search-status');status.hidden=false;
+        try{
+          if(!globalThis.chrome?.runtime?.id)throw new Error('Run ai-service/start.ps1 -SearchSetup to install the optional search model.');
+          const response=await chrome.runtime.sendMessage({action:'openStudio',setup:true});
+          if(!response?.ok)throw new Error(response?.error||'Could not open Local AI setup');
+          status.textContent='Choose an engine in AI setup and load its models. This panel uses the same saved choice.';
+        }catch(error){status.textContent=error.message;}
       });
   
       // Guess delay — number input (main panel only)
@@ -6598,6 +6785,10 @@
           candidates: state.candidates.length,
           sentThisRound: [...state.sentThisRound],
           lastGuess: state.lastGuess,
+          pendingGuess: state.delivery.pending?.out || null,
+          retryGuess: state.retryDelivery?.word || state.closeHitPending || null,
+          spamDetectedCount: state.spamDetectedCount,
+          cooldownRemainingMs: Math.max(0, state.spamBlockedUntil - Date.now()),
           rawHint: state.currentHintRaw,
           underscorePattern: state.currentUnderscorePattern,
           letterPattern: state.currentLetterPattern,
@@ -6706,6 +6897,13 @@
       const drawerMax = panel.querySelector('#sag-drawer-max');
       const drawerChunk = panel.querySelector('#sag-drawer-chunk');
       const drawerDelay = panel.querySelector('#sag-drawer-delay');
+      const drawerStyle = panel.querySelector('#sag-drawer-style');
+      const drawerImitateSubWrap = panel.querySelector('#sag-drawer-imitate-sub-wrap');
+      const drawerImitateSub = panel.querySelector('#sag-drawer-imitate-sub');
+      const drawerImitateMoreWrap = panel.querySelector('#sag-drawer-imitate-more-wrap');
+      const drawerImitateMore = panel.querySelector('#sag-drawer-imitate-more');
+      const drawerImitateSpeedWrap = panel.querySelector('#sag-drawer-imitate-speed-wrap');
+      const drawerImitateDelay = panel.querySelector('#sag-drawer-imitate-delay');
       const drawerStats = panel.querySelector('#sag-drawer-stats');
       const drawerProcessBtn = panel.querySelector('#sag-drawer-process');
       const drawerStartBtn = panel.querySelector('#sag-drawer-start');
@@ -6719,6 +6917,7 @@
       let drawerLoadedImg = null;
       let drawerProcessedPoints = null;
       let drawerProcessedCanvas = null;
+      let drawerProcessedCurveSegments = null;
 
       function loadDrawerImage(file) {
         if (!file || !file.type.startsWith('image/')) return;
@@ -6727,6 +6926,7 @@
           drawerLoadedImg = img;
           drawerProcessedPoints = null;
           drawerProcessedCanvas = null;
+          drawerProcessedCurveSegments = null;
           drawerProcessBtn.disabled = false;
           drawerStartBtn.disabled = true;
           const preCtx = drawerPreview.getContext('2d');
@@ -6945,6 +7145,11 @@
         function undock(clientX, clientY) {
           if (!drawerBlock || !drawerSlot) return;
           const fc = createFloatContainer();
+          // A drawer dragged out of the dock always opens. A reused float may
+          // still have its collapsed height, so restore its content area too.
+          const maxH = Math.min(DRAWER_FLOAT_SIZE.maxHeight, Math.floor(window.innerHeight * 0.85));
+          const savedH = settings.drawerFloatHeight;
+          fc.el.style.height = Math.max(DRAWER_FLOAT_MIN_CONTENT_HEIGHT, Math.min(maxH, savedH && savedH >= DRAWER_FLOAT_MIN_CONTENT_HEIGHT ? savedH : DRAWER_FLOAT_DEFAULT_HEIGHT)) + 'px';
           const panelRect = getPanelRect();
           const fw = parseInt(fc.el.style.width, 10) || 320;
           const fh = parseInt(fc.el.style.height, 10) || DRAWER_FLOAT_DEFAULT_HEIGHT;
@@ -6967,8 +7172,8 @@
           if (!fc.el.parentElement) document.body.appendChild(fc.el);
           fc.body.appendChild(drawerBlock);
           drawerBlock.setAttribute('style', savedBlockStyle || '');
-          if (drawerSection) drawerSection.style.display = savedExpandedOnDragStart ? 'block' : 'none';
-          if (drawerCollapse) drawerCollapse.textContent = savedExpandedOnDragStart ? '\u2212' : '+';
+          if (drawerSection) drawerSection.style.display = 'block';
+          if (drawerCollapse) drawerCollapse.textContent = '\u2212';
           addDockBackToBlockHeader();
           placeholderEl = document.createElement('div');
           placeholderEl.className = 'sag-drawer-placeholder';
@@ -6999,7 +7204,6 @@
         }
 
         let savedBlockStyle = '';
-        let savedExpandedOnDragStart = true;
         let lastInDockZone = true;
 
         function startDockedDrag(e) {
@@ -7008,7 +7212,6 @@
           const w = Math.max(rect.width, 280);
           const h = Math.max(rect.height, 120);
           savedBlockStyle = drawerBlock.getAttribute('style') || '';
-          savedExpandedOnDragStart = drawerSection && drawerSection.style.display !== 'none';
           lastInDockZone = true;
           dragOffsetX = e.clientX - rect.left;
           dragOffsetY = e.clientY - rect.top;
@@ -7102,6 +7305,7 @@
       function invalidateProcessed(reason) {
         drawerProcessedPoints = null;
         drawerProcessedCanvas = null;
+        drawerProcessedCurveSegments = null;
         if (drawerStartBtn) drawerStartBtn.disabled = true;
         if (drawerStats) drawerStats.textContent = reason || 'Click Process image to apply.';
       }
@@ -7138,6 +7342,22 @@
       // Sync initial slider value displays
       if (drawerDensityVal && drawerDensity) drawerDensityVal.textContent = drawerDensity.value;
       if (drawerBgVal && drawerBg) drawerBgVal.textContent = drawerBg.value;
+      function updateDrawerImitateMoreVisibility() {
+        const isImitate = drawerStyle && drawerStyle.value === 'imitate';
+        if (drawerImitateSubWrap) drawerImitateSubWrap.style.display = isImitate ? 'block' : 'none';
+        if (drawerImitateMoreWrap) drawerImitateMoreWrap.style.display = isImitate ? 'block' : 'none';
+        if (drawerImitateSpeedWrap) drawerImitateSpeedWrap.style.display = isImitate ? 'block' : 'none';
+      }
+      if (drawerStyle) {
+        drawerStyle.addEventListener('change', () => {
+          updateDrawerImitateMoreVisibility();
+          invalidateProcessed('Drawing style changed. Click Process image to apply.');
+        });
+        updateDrawerImitateMoreVisibility();
+      }
+      if (drawerImitateSub) {
+        drawerImitateSub.addEventListener('change', () => invalidateProcessed('Imitate mode changed. Click Process image to apply.'));
+      }
 
       // File input
       if (drawerFile) {
@@ -7180,36 +7400,67 @@
 
       if (drawerProcessBtn) {
         drawerProcessBtn.addEventListener('click', () => {
-          if (!drawerLoadedImg || !drawer) return;
-          const density = parseInt(drawerDensity.value) || 5;
-          const bgThreshold = parseInt(drawerBg.value) || 30;
-          const maxPts = parseInt(drawerMax.value) || 0;
+          if (!drawerLoadedImg) {
+            if (drawerStats) drawerStats.textContent = 'Load an image first.';
+            return;
+          }
+          if (!drawer) {
+            if (drawerStats) drawerStats.textContent = 'Drawer not ready. Reload the page and try again.';
+            devLog('info', 'Drawer: Process clicked but window.__skribblDrawer is missing.');
+            return;
+          }
+          if (drawerStats) drawerStats.textContent = 'Processing...';
+          drawerProcessBtn.disabled = true;
+          try {
+            const density = parseInt(drawerDensity.value) || 5;
+            const bgThreshold = parseInt(drawerBg.value) || 30;
+            const maxPts = parseInt(drawerMax.value) || 0;
 
-          const useWhite = drawerUseWhite ? drawerUseWhite.checked : true;
-          const skipDrawWhite = drawerSkipDrawWhite ? drawerSkipDrawWhite.checked : true;
+            const useWhite = drawerUseWhite ? drawerUseWhite.checked : true;
+            const skipDrawWhite = drawerSkipDrawWhite ? drawerSkipDrawWhite.checked : true;
 
-          const result = drawer.processImage(drawerLoadedImg, {
-            bgThreshold,
-            density,
-            maxPoints: maxPts,
-            useWhite,
-            skipDrawWhite,
-          });
+            const style = (drawerStyle && drawerStyle.value) || 'realistic';
+            const imitateSubMode = (drawerImitateSub && drawerImitateSub.value) || 'photo';
+            const result = drawer.processImage(drawerLoadedImg, {
+              bgThreshold,
+              density,
+              maxPoints: maxPts,
+              useWhite,
+              skipDrawWhite,
+              style,
+              imitateSubMode: style === 'imitate' ? imitateSubMode : undefined,
+            });
 
-          drawerProcessedPoints = result.points;
-          drawerProcessedCanvas = result.canvas;
-          drawerStartBtn.disabled = false;
+            if (!result || !Array.isArray(result.points)) {
+              throw new Error('Process returned no points');
+            }
 
-          // Show processed preview
-          const preCtx = drawerPreview.getContext('2d');
-          preCtx.clearRect(0, 0, 200, 150);
-          const scale = Math.min(200 / drawer.CANVAS_W, 150 / drawer.CANVAS_H);
-          const pw = drawer.CANVAS_W * scale, ph = drawer.CANVAS_H * scale;
-          const ox = (200 - pw) / 2, oy = (150 - ph) / 2;
-          preCtx.drawImage(result.canvas, ox, oy, pw, ph);
+            drawerProcessedPoints = result.points;
+            drawerProcessedCanvas = result.canvas;
+            drawerProcessedCurveSegments = result.curveSegments || null;
+            drawerStartBtn.disabled = false;
 
-          updateDrawerEstimate();
-          devLog('info', `Drawer: processed ${result.points.length} points (density=${density}, bg=${bgThreshold}${result.contrastBoosted ? ', contrast boosted' : ''})`);
+            // Show processed preview
+            const preCtx = drawerPreview.getContext('2d');
+            preCtx.clearRect(0, 0, 200, 150);
+            const scale = Math.min(200 / drawer.CANVAS_W, 150 / drawer.CANVAS_H);
+            const pw = drawer.CANVAS_W * scale, ph = drawer.CANVAS_H * scale;
+            const ox = (200 - pw) / 2, oy = (150 - ph) / 2;
+            preCtx.drawImage(result.canvas, ox, oy, pw, ph);
+
+            updateDrawerEstimate();
+            devLog('info', `Drawer: processed ${result.points.length} points (density=${density}, bg=${bgThreshold}${result.contrastBoosted ? ', contrast boosted' : ''})`);
+          } catch (e) {
+            const msg = (e && (e.message || e.toString)) ? (e.message || e.toString()) : String(e);
+            if (drawerStats) drawerStats.textContent = 'Process failed: ' + msg;
+            devLog('info', 'Drawer: process error - ' + msg);
+            drawerProcessedPoints = null;
+            drawerProcessedCanvas = null;
+            drawerProcessedCurveSegments = null;
+            if (drawerStartBtn) drawerStartBtn.disabled = true;
+          } finally {
+            drawerProcessBtn.disabled = false;
+          }
         });
       }
 
@@ -7227,11 +7478,17 @@
 
           devLog('info', `Drawer: starting ${drawerProcessedPoints.length} points, brush=${brushSize}, chunk=${chunk}, delay=${delay}ms`);
 
+          const imitateMore = !!(drawerImitateMore && drawerImitateMore.checked);
+          const style = (drawerStyle && drawerStyle.value) || 'realistic';
+          const imitateDelayMs = style === 'imitate' && drawerImitateDelay ? (parseInt(drawerImitateDelay.value, 10) || 0) : 0;
           drawer.startDrawing(drawerProcessedPoints, {
             chunkSize: chunk,
             chunkDelayMs: delay,
             brushSize,
             processedCanvas: drawerProcessedCanvas,
+            curveSegments: drawerProcessedCurveSegments,
+            imitateMore,
+            imitateDelayMs,
             log: (msg) => devLog('info', 'Drawer: ' + msg),
             onMethod: (method) => {
               drawerStats.textContent = `Drawing via ${method}...`;
@@ -7304,6 +7561,26 @@
       if (drawerDelay) drawerDelay.addEventListener('change', updateDrawerEstimate);
       // ═══ End Auto-Drawer wiring ═════════════════════════════════════════
 
+      // The new mode owns its controls and uses the same UI/engine as the large viewer.
+      const studioHost=panel.querySelector('#sag-drawer-studio');
+      const modeSelect=panel.querySelector('#sag-drawer-engine');
+      const canDrawPlan=()=>{
+        if(document.querySelector('#game-wrapper'))return drawer?.isPlanDrawingTurn()===true;
+        const phase=getGamePhase();
+        return !['guessing','waiting-hint','between-rounds','between-words','choosing'].includes(phase) && !isBetweenRoundOverlayVisible();
+      };
+      const studio=window.SAGDrawerStudio?.mount(studioHost,{
+        compact:true,
+        draw:(plan,onProgress)=>drawer.startPlan(plan,{onProgress,canDraw:canDrawPlan}),
+        stop:()=>drawer?.stopPlan(),
+      });
+      modeSelect?.addEventListener('change',()=>{
+        studio?.stop();drawer?.stopDrawing();
+        const useNew=modeSelect.value==='colors';
+        studioHost.style.display=useNew?'block':'none';
+        panel.querySelector('#sag-drawer-legacy').style.display=useNew?'none':'block';
+      });
+
       state.ui = {
         panel,
         devPanel,
@@ -7324,6 +7601,10 @@
         devNickname: devPanel.querySelector('#sag-dev-nickname'),
         devLogEl: devPanel.querySelector('#sag-dev-log'),
       };
+      monitorSearchReadiness();
+      globalThis.chrome?.storage?.onChanged?.addListener((changes,area)=>{
+        if(area==='local'&&changes['sagAIBackend.v1']){wordSearch?.reset();monitorSearchReadiness();renderTopCandidates();}
+      });
     }
   
     function initWithRetry() {
@@ -7354,7 +7635,6 @@
         ensurePanelVisible(state.ui.panel);
       }
 
-      let lastRenderedHint = '';
       if (state.refreshLoopScheduled != null) {
         clearTimeout(state.refreshLoopScheduled);
         state.refreshLoopScheduled = null;
@@ -7390,8 +7670,9 @@
             // Always run even when wordGuessedThisRound=true — auto-recovery inside
             // refreshCandidates depends on being called when a new round hint appears.
             const currentHint = getHintText() || '';
-            if (currentHint && currentHint !== lastRenderedHint) {
-              lastRenderedHint = currentHint;
+            // Hint removal matters too: discard stale candidates and search
+            // errors even if the old hint element has already been replaced.
+            if (currentHint !== state.currentHintRaw) {
               refreshCandidates('auto-refresh-hint-change');
             }
 
@@ -7408,7 +7689,9 @@
   
       setInterval(() => {
         const hadInput = Boolean(state.selectors.input);
+        const oldChat = state.selectors.chat, oldHint = state.selectors.hint, oldRound = state.selectors.roundRoot;
         bindGameSelectors();
+        if (oldChat !== state.selectors.chat || oldHint !== state.selectors.hint || oldRound !== state.selectors.roundRoot) attachObservers();
         if (!hadInput && state.selectors.input) {
           setStatus('Recovered chat input');
         }

@@ -1,0 +1,65 @@
+{
+  "startupMs": 8906.7,
+  "firstSearchMs": 18.4,
+  "firstSearchEncodedWords": 0,
+  "candidates": 585,
+  "health": {
+    "ready": true,
+    "installed": true,
+    "lazy": false,
+    "device": "cpu",
+    "model": "sentence-transformers/all-MiniLM-L6-v2",
+    "revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "warming": false,
+    "preloadState": "ready",
+    "preloadedWords": 3708,
+    "totalWords": 3708,
+    "preloadMs": 8904.9,
+    "cacheHit": true,
+    "cacheWarning": null,
+    "error": null
+  },
+  "cacheBytes": 5309820,
+  "top": [
+    {
+      "word": "snack",
+      "score": 0.7001027464866638
+    },
+    {
+      "word": "pizza",
+      "score": 0.6375259757041931
+    },
+    {
+      "word": "salad",
+      "score": 0.6007221937179565
+    },
+    {
+      "word": "fruit",
+      "score": 0.6000055074691772
+    },
+    {
+      "word": "fries",
+      "score": 0.596280574798584
+    },
+    {
+      "word": "lunch",
+      "score": 0.5786123275756836
+    },
+    {
+      "word": "water",
+      "score": 0.5736960768699646
+    },
+    {
+      "word": "beans",
+      "score": 0.5709718465805054
+    },
+    {
+      "word": "bread",
+      "score": 0.555478572845459
+    },
+    {
+      "word": "chili",
+      "score": 0.546399712562561
+    }
+  ]
+}

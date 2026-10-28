@@ -1,0 +1,13 @@
+* text=auto
+*.js text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.png binary
+*.jpg binary
+*.avif binary
+*.onnx binary
+*.bin binary
+*.wasm binary
+# Model asset hashes cover exact bytes, including tokenizer/config/licenses.
+browser-ai/models/** -text whitespace=cr-at-eol

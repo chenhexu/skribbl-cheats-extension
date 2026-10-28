@@ -1,52 +1,44 @@
-**V2.1 BETA — TEST MODE**
-This release is version 2.1 beta and is still in test mode. If you run into problems or have suggestions, please report them on GitHub (issues) or in the Chrome Web Store reviews so we can improve the extension. Thank you!
+Skribbl Auto Guesser helps you find hint-matching words and turn uploaded pictures into drawings on skribbl.io. Search by spelling or meaning, review suggestions and image previews, and choose when to send guesses or start drawing.
 
----
+HINT-AWARE WORD SEARCH
+The panel reads the game's hint, including revealed letters and multiword lengths. Every suggestion must fit that hint. Type part of a word for ordinary text matching, or enable Related words to find spelling, category and meaning-based matches. For example, animal can find eligible animals, related parts or phrases; fish can find related ocean life.
 
-Skribbl Auto Guesser is a helper for skribbl.io. It reads the game hint from the page, matches it against a built-in word list, and lets you send guesses by clicking suggestions or by running an automatic guesser with a delay you control. In addition, the Auto-Drawer feature can process an image and draw it on the game canvas for you.
+Keep Closest first checked to rank matches, or turn it off for alphabetical order. Green, yellow and red indicate relevance; hover to see why a word matched. Relevance is not a prediction of the correct answer. No hint yet? The panel waits for one. A new drawing round clears your search.
 
-HINT PARSING AND WORD LIST
-• Reads the current hint (e.g. "c_t", "_____", or length-only) from the skribbl.io UI and filters a large built-in word list so only matching words are shown.
-• Supports underscore patterns, letter counts, and multi-word patterns (e.g. "5-8" for hyphenated words). Words are ranked and shown in a scrollable grid.
-• You can add your own words, remove words, and deduplicate the list. The word list is stored locally in your browser.
+CHOOSE HOW TO GUESS
+Click a suggestion, press Enter for the first result, or use 1-9 for the corresponding visible result. Start enables automatic guessing at your chosen delay; Stop stops it. Game feedback confirms delivery, and spam warnings pause sending so rejected attempts are not silently treated as accepted guesses. The game's sending limits still apply.
 
-MANUAL GUESSING
-• Click any suggested word to send it as your guess in the chat.
-• Use the search box to filter candidates by typing; the grid updates as you type.
-• Press Enter to send the first matching result, or press 1–9 to send the 1st–9th result without clicking.
+IMAGE AUTO-DRAWER
+Upload or drop an image, choose Auto settings and click Process image. Inspect the original, simplified colors, detected lines, final drawing and animated drawing path before starting. During your own drawing turn, use Start drawing in the Skribbl panel; Stop cancels the run.
 
-AUTOMATIC GUESSING (BOT)
-• **Start** — Runs the bot: it sends guesses from the candidate list one at a time, with a delay between each guess.
-• **Stop** — Pauses the bot.
-• **Delay (ms)** — Sets the time between automatic guesses (0–8000 ms).
-• **Refresh parse** — Re-reads the hint from the page and rebuilds the candidate list and queue.
+Auto adapts color and processing settings to each picture while leaving Outline detail under your control. Manual edits turn Auto off and keep its other suggested values. Use up to 24 simplified colors per layer, adjust color merging, or try Amplify colors to lift dark hues before mapping to the game's palette. The selected color count is a maximum, not a guaranteed number of distinct colors.
 
-DOT PREFIX AND CLOSE-HIT
-• With "Dot prefix" enabled, guesses are sent with a leading dot (e.g. ".word"). If the game replies "word is close!", the extension can resend the word without the dot so you do not use an extra guess.
-• A dedicated close-hit watcher runs right after each dot-prefixed send and can resend without the dot when it sees the "is close!" message. You can set how often it checks (close-hit scan rate, in the details section).
-• "Bot refresh rate" (in details) controls how often the extension checks the page for hint and chat changes. "Close-hit scan rate" controls how often the close-hit watcher checks after a dot send.
+For landscapes, choose Full image / scenery without subject selection. For an object, enable Use main subject and choose Subject only or Subject first + simplified background. Process image finds a subject automatically when needed. Mark subject and Edit subject parts let you correct missing pieces manually. Cropping is a separate choice.
 
-AUTO-DRAWER (V2)
-• **Process image** — Converts your uploaded image into drawing points. Use after adjusting Density and BG removal (see below).
-• **Start drawing** — Sends the drawing to the game canvas via the browser’s debugger (CDP) or socket. The bot fills shapes row-by-row and prefers horizontal/vertical strokes for speed.
-• **Stop** — Stops the current drawing run.
-• **Density** (1–6) — How many sample points per area: 1 = fewer points (faster, less detail), 6 = most detail. Capped to reduce lag.
-• **BG removal** (0–120) — Makes near-white pixels transparent so they are not drawn. 0 = off; higher = more aggressive removal. Helps with images on white backgrounds.
-• **Calibrate** — Draws a few test dots on the canvas so you can verify the drawing path is aligned (useful after resizing the game window).
-• **Where is canvas?** — Logs detected canvas elements on the page; useful if drawing does not appear.
-• The Auto-Drawer panel can be dragged out into a separate floating window, resized from any edge or corner, and collapsed to a header bar. Use **Dock back** to return it to the main panel. When docked, it keeps its colors (blue/green/red buttons, etc.).
+Fast/Balanced speed and the drawing target control the tradeoff between time and detail. Plans may omit small features to fit the target; preview statistics show the result. Drawing uses trusted browser input and displays Chrome's debugger notice while active.
 
-PROTECTION AND ROUND HANDLING
-• The extension detects game phase (guessing, drawing, between rounds) and only runs the bot when you are in the guessing phase. It stops or pauses when you are drawing or when the round ends.
-• It detects when you or others guess the word, when the round ends ("the word was"), and when a new round starts. It resets its state so it does not resend old words in the next round.
-• If the game shows a spam warning in chat, the extension applies a cooldown and, after repeated detection, stops the bot to reduce the risk of being kicked.
+Suitable thick lines use a matching wider pencil to reduce thin contour tracing and bucket clicks. The planner checks the brush footprint and keeps bucket filling when an irregular shape cannot be reproduced safely.
 
-PANEL AND SETTINGS
-• The main panel shows the current hint, the search box, and the grid of suggested words. It can be dragged, resized from any edge or corner, and **collapsed** to a title bar using the **−/+** (dim) button in the top-right of the panel.
-• **Show dev** (in the header, next to the dim button) — Opens the optional Developer Panel in a separate floating window. The Developer Panel shows a log of bot events, your detected nickname, and tools: Snapshot state, Force hide/show words, Clear sent set, Simulate new round, Clear log, Copy log. The log resizes with the panel. Useful for debugging or checking behavior.
-• A "Details" section (expandable via "Show details v" / "Hide details ^") shows status, raw hint, underscore pattern, letter pattern, word count, candidate count, last guess, mode, game phase, close-hit state, and spam cooldown. It also has the word add/remove/dedupe controls and the refresh rate and close-hit scan sliders.
+AI ON YOUR COMPUTER
+Open Local AI setup and choose Inside Chrome - GPU acceleration, Inside Chrome - CPU, or the optional Python terminal service. Chrome modes include the models in the extension: no terminal, paid AI account or API key is required. Load the models before playing, check each feature's readiness and test word-search speed on your device. First loading can take several seconds. GPU support depends on your browser and graphics driver; CPU is available as an alternative.
 
-PRIVACY AND SCOPE
-• The extension runs only on skribbl.io. It does not send your data to any external server. Settings, word list, and panel positions are stored locally in your browser (localStorage).
-• The "debugger" permission is used only for the Auto-Drawer when drawing via CDP on the skribbl.io tab; no data is sent elsewhere.---
-Report issues on GitHub or in the Store reviews. Thank you for trying the beta!
+Local AI supplies semantic word suggestions, foreground masks and optional line detection. Browser line detection, curated categories, Auto settings and manual selection work without neural inference. AI may miss parts or return weak associations; the preview and selection tools let you correct it.
+
+WORKSPACE AND PREFERENCES
+Drag the drawer out of its dock to expand it, resize it or open the large image viewer for cropping and previews. Drawing starts from the Skribbl panel. Local AI setup chooses the engine shared by both. Drawing speed, target, subject/background mode, line detector and color amplification are remembered. Download a preview PNG or plan JSON when needed.
+
+PRIVACY AND ACCESS
+Content scripts run only on skribbl.io. Chrome AI uses packaged models on your device. No hosted inference provider, analytics collector or API token is used. Guesses and drawing input go to Skribbl, and optional public word-list downloads contact GitHub/jsDelivr. Python mode sends images or search inputs only to your own service at 127.0.0.1:8765 after you grant access. Preferences and custom word choices are stored locally.
+
+Storage remembers preferences and the AI engine; Offscreen hosts the browser AI worker; Debugger performs drawing you start on the game canvas. The optional Python companion is installed separately from the source project. See the linked privacy policy for full details.
+
+GETTING STARTED
+1. Open or refresh skribbl.io after installation.
+2. For terminal-free AI, open Local AI setup, select Chrome CPU or GPU and click Load AI models.
+3. Search the current hint's word bank, or upload an image in Auto-Drawer, process it and inspect the preview.
+4. Send a selected guess or start drawing during your own turn.
+
+Usage guide: https://github.com/chenhexu/skribbl-cheats-extension/blob/main/docs/USAGE.md
+Support: https://github.com/chenhexu/skribbl-cheats-extension/issues
+
+Independently developed; not affiliated with Skribbl or Google.

@@ -1,0 +1,9 @@
+# Manual settings 2.2.6
+
+Validated October 25, 2026. The light-lines treatment in 2.2.5 disabled Color count, Merge similar colors, and Near-white removal independently of the Auto checkbox. Unchecking Auto therefore kept those sliders locked.
+
+All processing controls now remain editable in both Auto and manual modes. Unchecking Auto preserves every suggested value, including the light-lines treatment. Editing an ordinary setting switches Auto off while preserving other values. Editing a color-region-only setting (color count, merging, or near-white removal) from light-lines also selects Color regions + black borders and explains the change next to Auto. This makes the edit take effect rather than passing an unsupported setting to the two-color pipeline. Rechecking Auto restores its recommendation.
+
+Six distinct targeted Chrome tests passed: all three blueprint tests, including the new manual handoff regression and real local AI comparison, plus the three existing Auto/manual, delayed suggestion, and crop/session tests. The new regression checks every processing control is enabled in the expanded and 320-pixel compact viewers; verifies unchecking leaves values unchanged and marks the plan stale; exercises each formerly locked slider; verifies direct slider editing from Auto; and processes a manual plan with the chosen values. Both compact manual states were visually inspected. Packaging passed JavaScript syntax and manifest-reference checks.
+
+The shared image engine, model, drawing executor, and guess-delivery logic are unchanged in this release. Refresh the local viewer with Ctrl+Shift+R, or reload the extension at chrome://extensions and refresh Skribbl. The JavaScript changes do not require restarting the Python service. The local package is dist/skribbl-auto-guesser-2.2.6.zip; nothing was published to the store.

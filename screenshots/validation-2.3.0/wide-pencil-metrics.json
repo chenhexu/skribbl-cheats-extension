@@ -1,0 +1,89 @@
+{
+  "metrics": {
+    "colors": 1,
+    "operations": 3,
+    "strokes": 3,
+    "buckets": 0,
+    "moves": 62,
+    "events": 68,
+    "colorChanges": 1,
+    "brushChanges": 3,
+    "estimatedMs": 662
+  },
+  "sizes": [
+    20,
+    32,
+    40
+  ],
+  "differences": [
+    {
+      "fraction": 0.1,
+      "changed": 0,
+      "max": 0,
+      "left": 800,
+      "right": 0,
+      "top": 600,
+      "bottom": 0
+    },
+    {
+      "fraction": 0.5,
+      "changed": 0,
+      "max": 0,
+      "left": 800,
+      "right": 0,
+      "top": 600,
+      "bottom": 0
+    },
+    {
+      "fraction": 1,
+      "changed": 0,
+      "max": 0,
+      "left": 800,
+      "right": 0,
+      "top": 600,
+      "bottom": 0
+    },
+    {
+      "fraction": 0.2,
+      "changed": 0,
+      "max": 0,
+      "left": 800,
+      "right": 0,
+      "top": 600,
+      "bottom": 0
+    },
+    {
+      "fraction": 1,
+      "changed": 0,
+      "max": 0,
+      "left": 800,
+      "right": 0,
+      "top": 600,
+      "bottom": 0
+    }
+  ],
+  "thick": [
+    0,
+    0,
+    0,
+    255
+  ],
+  "outside": [
+    255,
+    255,
+    255,
+    255
+  ],
+  "ring": [
+    0,
+    0,
+    0,
+    255
+  ],
+  "hole": [
+    255,
+    255,
+    255,
+    255
+  ]
+}

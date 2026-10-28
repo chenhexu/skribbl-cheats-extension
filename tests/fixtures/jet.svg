@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600">
+ <defs><pattern id="runway" width="35" height="25" patternUnits="userSpaceOnUse"><rect width="35" height="25" fill="#505050"/><path d="M0 10L30 2M5 22L25 12" stroke="#c1c1c1" stroke-width="3"/><rect x="25" y="18" width="6" height="5" fill="#000"/></pattern></defs>
+ <rect width="800" height="600" fill="#c1c1c1"/><rect y="320" width="800" height="280" fill="url(#runway)"/>
+ <path id="plane" d="M100 310L210 275L180 140L215 130L320 260L470 250L550 230L590 250L715 280L745 300L650 320L535 335L490 365L380 350L280 360L220 345L100 335Z" fill="#000"/>
+ <path d="M470 250Q510 215 550 230L570 250Z" fill="#505050"/><path d="M220 300L580 280M240 315L620 300" stroke="#c1c1c1" stroke-width="3"/>
+ <path d="M285 350V390M590 330V385" stroke="#000" stroke-width="7"/><circle cx="285" cy="390" r="12"/><circle cx="590" cy="385" r="12"/>
+</svg>

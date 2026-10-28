@@ -1,0 +1,55 @@
+{
+  "wordModel": "sentence-transformers/all-MiniLM-L6-v2",
+  "wordRevision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+  "publicWords": 3708,
+  "files": {
+    "LICENSE.informative-drawings": {
+      "bytes": 1070,
+      "sha256": "d12dd7d51af0afb8d6af4fdc18983a627be13559e1269422163bbe5353e3522e"
+    },
+    "LICENSE.minilm": {
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "LICENSE.u2net": {
+      "bytes": 11357,
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    "lines.onnx": {
+      "bytes": 17217792,
+      "sha256": "f20292afcaf85284326605ef09de14e25c8dab733b8d97fac9a5caeb568a9ff8"
+    },
+    "public-vectors.bin": {
+      "bytes": 5695488,
+      "sha256": "33647f548b7300187671c554f85fc9e1b38c7b95651f87c5720dbd8b79c72cc9"
+    },
+    "public-words.json": {
+      "bytes": 40677,
+      "sha256": "73dcb75e2392aa8658c9ca95fe7faaed9491658df8a8df60bde3ba644ae64bd6"
+    },
+    "subject.onnx": {
+      "bytes": 4652612,
+      "sha256": "e8c184c4aed6c35d4077316bb6dce3fdb2ad555b3961dd7dcfc7ebcfbb3f2680"
+    },
+    "words.onnx": {
+      "bytes": 90361249,
+      "sha256": "5653e3aeaf196369e4d137ef1a3fea83fe4156d8af4978c45cac8419eebc38f4"
+    },
+    "word-search/config.json": {
+      "bytes": 612,
+      "sha256": "953f9c0d463486b10a6871cc2fd59f223b2c70184f49815e7efbcab5d8908b41"
+    },
+    "word-search/special_tokens_map.json": {
+      "bytes": 112,
+      "sha256": "303df45a03609e4ead04bc3dc1536d0ab19b5358db685b6f3da123d05ec200e3"
+    },
+    "word-search/tokenizer.json": {
+      "bytes": 466247,
+      "sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
+    },
+    "word-search/tokenizer_config.json": {
+      "bytes": 350,
+      "sha256": "acb92769e8195aabd29b7b2137a9e6d6e25c476a4f15aa4355c233426c61576b"
+    }
+  }
+}

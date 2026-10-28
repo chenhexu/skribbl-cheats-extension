@@ -1,0 +1,359 @@
+{
+  "model": {
+    "ready": true,
+    "installed": true,
+    "lazy": true,
+    "device": "cpu",
+    "model": "sentence-transformers/all-MiniLM-L6-v2",
+    "revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "error": null
+  },
+  "dictionaryWords": 3712,
+  "runs": [
+    {
+      "query": "fish",
+      "length": 7,
+      "candidates": 468,
+      "wallMs": 8924.0,
+      "encodedWords": 466,
+      "top": [
+        {
+          "word": "catfish",
+          "score": 0.795380711555481
+        },
+        {
+          "word": "seafood",
+          "score": 0.7389814257621765
+        },
+        {
+          "word": "dogfish",
+          "score": 0.7203693389892578
+        },
+        {
+          "word": "dolphin",
+          "score": 0.6127034425735474
+        },
+        {
+          "word": "lobster",
+          "score": 0.5854274034500122
+        },
+        {
+          "word": "Red Sea",
+          "score": 0.5266165137290955
+        },
+        {
+          "word": "mermaid",
+          "score": 0.5180028676986694
+        },
+        {
+          "word": "torpedo",
+          "score": 0.5111048221588135
+        },
+        {
+          "word": "chicken",
+          "score": 0.5097706317901611
+        },
+        {
+          "word": "octopus",
+          "score": 0.5078519582748413
+        }
+      ]
+    },
+    {
+      "query": "food",
+      "length": 5,
+      "candidates": 587,
+      "wallMs": 351.3,
+      "encodedWords": 585,
+      "top": [
+        {
+          "word": "snack",
+          "score": 0.7001027464866638
+        },
+        {
+          "word": "pizza",
+          "score": 0.6375259757041931
+        },
+        {
+          "word": "salad",
+          "score": 0.6007221937179565
+        },
+        {
+          "word": "fruit",
+          "score": 0.6000055074691772
+        },
+        {
+          "word": "fries",
+          "score": 0.596280574798584
+        },
+        {
+          "word": "lunch",
+          "score": 0.5786123275756836
+        },
+        {
+          "word": "water",
+          "score": 0.5736960768699646
+        },
+        {
+          "word": "beans",
+          "score": 0.5709718465805054
+        },
+        {
+          "word": "bread",
+          "score": 0.555478572845459
+        },
+        {
+          "word": "chili",
+          "score": 0.546399712562561
+        }
+      ]
+    },
+    {
+      "query": "music",
+      "length": 6,
+      "candidates": 564,
+      "wallMs": 346.2,
+      "encodedWords": 564,
+      "top": [
+        {
+          "word": "guitar",
+          "score": 0.6099696159362793
+        },
+        {
+          "word": "stereo",
+          "score": 0.598119854927063
+        },
+        {
+          "word": "Mozart",
+          "score": 0.5464897155761719
+        },
+        {
+          "word": "artist",
+          "score": 0.5415752530097961
+        },
+        {
+          "word": "violin",
+          "score": 0.5333949327468872
+        },
+        {
+          "word": "lyrics",
+          "score": 0.4858335256576538
+        },
+        {
+          "word": "studio",
+          "score": 0.47909674048423767
+        },
+        {
+          "word": "rapper",
+          "score": 0.47856631875038147
+        },
+        {
+          "word": "school",
+          "score": 0.4500856399536133
+        },
+        {
+          "word": "chorus",
+          "score": 0.4393421411514282
+        }
+      ]
+    },
+    {
+      "query": "food",
+      "length": null,
+      "candidates": 3712,
+      "wallMs": 2488.4,
+      "encodedWords": 2093,
+      "top": [
+        {
+          "word": "food",
+          "score": 1.0000001192092896
+        },
+        {
+          "word": "meal",
+          "score": 0.7983056902885437
+        },
+        {
+          "word": "eat",
+          "score": 0.7460007667541504
+        },
+        {
+          "word": "fast food",
+          "score": 0.7402914762496948
+        },
+        {
+          "word": "snack",
+          "score": 0.7001027464866638
+        },
+        {
+          "word": "meat",
+          "score": 0.6996052861213684
+        },
+        {
+          "word": "junk food",
+          "score": 0.6982614398002625
+        },
+        {
+          "word": "pet food",
+          "score": 0.6977280378341675
+        },
+        {
+          "word": "dinner",
+          "score": 0.6846630573272705
+        },
+        {
+          "word": "pizza",
+          "score": 0.6375259757041931
+        }
+      ]
+    },
+    {
+      "query": "fo",
+      "length": null,
+      "candidates": 3712,
+      "wallMs": 19.0,
+      "encodedWords": 0,
+      "top": [
+        {
+          "word": "pho",
+          "score": 0.5963279008865356
+        },
+        {
+          "word": "moo",
+          "score": 0.5923610925674438
+        },
+        {
+          "word": "Dumbo",
+          "score": 0.4971626102924347
+        },
+        {
+          "word": "flamingo",
+          "score": 0.47707903385162354
+        },
+        {
+          "word": "AFK",
+          "score": 0.4518696963787079
+        },
+        {
+          "word": "macho",
+          "score": 0.4193202555179596
+        },
+        {
+          "word": "Thanos",
+          "score": 0.4026782512664795
+        },
+        {
+          "word": "pinky",
+          "score": 0.4005773365497589
+        },
+        {
+          "word": "shoot",
+          "score": 0.3983568549156189
+        },
+        {
+          "word": "Gru",
+          "score": 0.39610183238983154
+        }
+      ]
+    },
+    {
+      "query": "foo",
+      "length": null,
+      "candidates": 3712,
+      "wallMs": 16.2,
+      "encodedWords": 0,
+      "top": [
+        {
+          "word": "fist",
+          "score": 0.5106775164604187
+        },
+        {
+          "word": "air",
+          "score": 0.5010210871696472
+        },
+        {
+          "word": "short",
+          "score": 0.4970414638519287
+        },
+        {
+          "word": "alcohol",
+          "score": 0.471019446849823
+        },
+        {
+          "word": "umbrella",
+          "score": 0.4686472415924072
+        },
+        {
+          "word": "gag",
+          "score": 0.46622684597969055
+        },
+        {
+          "word": "drunk",
+          "score": 0.46572208404541016
+        },
+        {
+          "word": "shout",
+          "score": 0.4619607925415039
+        },
+        {
+          "word": "beer",
+          "score": 0.4616822600364685
+        },
+        {
+          "word": "hashtag",
+          "score": 0.45616742968559265
+        }
+      ]
+    },
+    {
+      "query": "food",
+      "length": null,
+      "candidates": 3712,
+      "wallMs": 10.0,
+      "encodedWords": 0,
+      "top": [
+        {
+          "word": "food",
+          "score": 1.0000001192092896
+        },
+        {
+          "word": "meal",
+          "score": 0.7983056902885437
+        },
+        {
+          "word": "eat",
+          "score": 0.7460007667541504
+        },
+        {
+          "word": "fast food",
+          "score": 0.7402914762496948
+        },
+        {
+          "word": "snack",
+          "score": 0.7001027464866638
+        },
+        {
+          "word": "meat",
+          "score": 0.6996052861213684
+        },
+        {
+          "word": "junk food",
+          "score": 0.6982614398002625
+        },
+        {
+          "word": "pet food",
+          "score": 0.6977280378341675
+        },
+        {
+          "word": "dinner",
+          "score": 0.6846630573272705
+        },
+        {
+          "word": "pizza",
+          "score": 0.6375259757041931
+        }
+      ]
+    }
+  ],
+  "warmFullBankMedianMs": 9.2,
+  "warmFullBankMaxMs": 10.3
+}

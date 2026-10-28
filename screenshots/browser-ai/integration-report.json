@@ -1,0 +1,36 @@
+{
+  "externalRequests": [],
+  "gameSearch": [
+    "guitar",
+    "stereo",
+    "mozart",
+    "artist",
+    "violin",
+    "lyrics",
+    "studio",
+    "rapper",
+    "school",
+    "chorus",
+    "eminem",
+    "cinema",
+    "police",
+    "comedy",
+    "signal",
+    "sports",
+    "church",
+    "ballet",
+    "earwax",
+    "soccer",
+    "iphone"
+  ],
+  "subject": {
+    "method": "ai",
+    "modelMs": 2040.3999999761581
+  },
+  "linePlan": {
+    "modelMs": 1981.1000000238419,
+    "strokes": 173,
+    "detector": "ai"
+  },
+  "preferenceSurvivesRestart": true
+}

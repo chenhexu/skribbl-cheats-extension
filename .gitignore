@@ -2,3 +2,22 @@
 *.zip
 .DS_Store
 Thumbs.db
+node_modules/
+ai-service/.venv/
+ai-service/checkpoints/
+__pycache__/
+*.pyc
+test-results/
+playwright-report/
+dist/
+# Generated browser AI assets are distributed in the release ZIP.
+browser-ai/models/*.onnx
+browser-ai/models/*.bin
+browser-ai/runtime/
+browser-ai/worker.js
+# Local-only credentials and editor files
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/

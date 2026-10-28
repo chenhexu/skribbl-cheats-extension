@@ -1,0 +1,56 @@
+{
+  "browser": "151.0.7922.34",
+  "gpu": "Chrome GPU access is available. Use the speed test to measure performance on this device.",
+  "modes": {
+    "cpu": {
+      "loadMs": 5559,
+      "status": "All three AI features are ready. Return to Skribbl to use them.",
+      "features": [
+        "Related word suggestionsMiniLMReady · Chrome CPUFind main subjectU2NETPReady · Chrome CPUAI line detectionInformative DrawingsReady · Chrome CPU"
+      ],
+      "search": {
+        "ok": true,
+        "id": "2129945327:aed93250-7c88-4380-afa3-f40278c90266",
+        "matches": [
+          {
+            "word": "reindeer",
+            "score": 0.42979472841903765
+          },
+          {
+            "word": "chair",
+            "score": 0.32762709624848585
+          },
+          {
+            "word": "mantis",
+            "score": 0.2783778031997852
+          },
+          {
+            "word": "bear trap",
+            "score": 0.43648487140843684
+          },
+          {
+            "word": "tail",
+            "score": 0.38530712440166703
+          }
+        ],
+        "model": "sentence-transformers/all-MiniLM-L6-v2",
+        "device": "wasm",
+        "processingMs": 7,
+        "encodedWords": 0
+      },
+      "benchmark": "Warm word search: 8 ms median across 3 queries, including extension messaging (Chrome CPU). Actual typing also uses a 200 ms debounce.",
+      "images": {
+        "aiSubject": {
+          "ok": true,
+          "ms": 1904,
+          "device": "wasm"
+        },
+        "aiLineart": {
+          "ok": true,
+          "ms": 2014,
+          "device": "wasm"
+        }
+      }
+    }
+  }
+}

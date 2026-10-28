@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Line-art pipeline – step viewer</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; margin: 16px; background: #1a1a2e; color: #eee; }
+    h1 { font-size: 1.25rem; margin-bottom: 12px; }
+    .upload { margin-bottom: 16px; }
+    .upload input[type="file"] { margin-right: 8px; }
+    .steps { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+    .step { background: #16213e; border-radius: 8px; padding: 12px; }
+    .step h2 { font-size: 0.9rem; margin: 0 0 8px 0; color: #a0a0ff; }
+    .step canvas { display: block; width: 100%; max-width: 400px; height: auto; border: 1px solid #333; border-radius: 4px; background: #111; }
+    .step-final { grid-column: 1 / -1; }
+    .step-final canvas { max-width: 720px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Cpath fill='%23222' d='M0 0h8v8H0zm8 8h8v8H8z'/%3E%3C/svg%3E"); }
+    .step p { font-size: 0.75rem; color: #888; margin: 6px 0 0 0; }
+    .params { margin-bottom: 12px; font-size: 0.85rem; }
+    .params label { margin-right: 12px; }
+    .params input[type="number"] { width: 60px; padding: 4px; background: #0f0f23; border: 1px solid #333; color: #eee; border-radius: 4px; }
+    .version { font-size: 0.7rem; color: #666; font-weight: normal; margin-left: 8px; }
+    .drop-zone { border: 2px dashed #444; border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 16px; background: #0f0f23; transition: border-color 0.15s, background 0.15s; }
+    .drop-zone.drag-over { border-color: #2563eb; background: #1a2744; }
+    .drop-zone p { margin: 0 0 10px 0; color: #aaa; font-size: 0.9rem; }
+    .drop-zone input[type="file"] { margin-right: 8px; }
+    .drop-zone .filename { font-size: 0.8rem; color: #888; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Line-art pipeline – see each filter step <span class="version" id="version">v1.0.9</span></h1>
+  <p>Upload an image to run the Canny-style pipeline. Each step is shown below.</p>
+  <p><a href="studio.html" style="color:#93c5fd;">Open the new Colors + outlines Drawing Studio with crop, stroke preview, and playback.</a></p>
+  <div class="upload drop-zone" id="dropZone">
+    <p>Drop an image here or <input type="file" id="file" accept="image/*"> choose file</p>
+    <span class="filename" id="filename"></span>
+  </div>
+  <div class="params">
+    <label>Gaussian sigma: <input type="number" id="sigma" value="1.4" min="0.5" max="3" step="0.1" title="Higher = smoother edges, less noise"></label>
+    <label>Low threshold: <input type="number" id="low" value="20" min="0" max="255" title="Lower = more edges"></label>
+    <label>High threshold: <input type="number" id="high" value="55" min="0" max="255" title="Keep Low about ⅓–½ of High"></label>
+    <button type="button" id="refresh" style="margin-left:12px;padding:6px 14px;font-size:12px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;">Re-run</button>
+  </div>
+  <div class="params" style="margin-top:8px;">
+    <label>Final output: <select id="finalMode" style="padding:4px;background:#0f0f23;border:1px solid #333;color:#eee;border-radius:4px;">
+      <option value="canny">Canny (thin edges)</option>
+      <option value="sobel">Sobel (thick lines)</option>
+    </select></label>
+    <label id="sobelThreshWrap" style="display:none;">Sobel threshold: <input type="number" id="sobelThresh" value="40" min="0" max="255" title="Lower = more lines"></label>
+    <label style="margin-left:12px;"><input type="checkbox" id="dilate" checked title="Connect nearby dots (2 passes)"> Dilate edges (less dotty)</label>
+    <label style="margin-left:12px;"><input type="checkbox" id="bgSuppress" title="Fade edges toward border color to reduce background noise"> Suppress background</label>
+  </div>
+  <p style="font-size:0.8rem;color:#888;margin-top:0;">If edges are too sparse, lower thresholds or pick <strong>Sobel (thick lines)</strong>. Use <strong>Suppress background</strong> for noisy/blurry backgrounds.</p>
+  <div class="steps" id="steps"></div>
+  <div class="export-section" style="margin-top:24px;padding:16px;background:#16213e;border-radius:8px;">
+    <h2 style="font-size:1rem;margin:0 0 12px 0;color:#a0a0ff;">Export for plotter / bot</h2>
+    <p style="font-size:0.85rem;color:#aaa;margin:0 0 12px 0;">Path order is optimized (nearest-neighbor) so the pen travels less. G0 = move without drawing, G1 = draw.</p>
+    <div class="params">
+      <label>Work area width (mm): <input type="number" id="workWidth" value="100" min="1" max="500"></label>
+      <label>Work area height (mm): <input type="number" id="workHeight" value="100" min="1" max="500"></label>
+      <button type="button" id="downloadGcode" style="margin-left:12px;padding:6px 14px;font-size:12px;background:#059669;color:#fff;border:none;border-radius:6px;cursor:pointer;">Download G-code</button>
+      <button type="button" id="downloadBotJson" style="margin-left:8px;padding:6px 14px;font-size:12px;background:#7c3aed;color:#fff;border:none;border-radius:6px;cursor:pointer;">Download bot JSON</button>
+    </div>
+  </div>
+  <script src="pipeline.js"></script>
+  <script src="gcode.js"></script>
+  <script src="legacy-viewer.js"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "before": {
+    "colors": 4,
+    "operations": 212,
+    "strokes": 212,
+    "buckets": 5,
+    "moves": 289,
+    "events": 718,
+    "colorChanges": 5,
+    "brushChanges": 7,
+    "estimatedMs": 6482
+  },
+  "after": {
+    "colors": 4,
+    "operations": 24,
+    "strokes": 24,
+    "buckets": 4,
+    "moves": 187,
+    "events": 239,
+    "colorChanges": 4,
+    "brushChanges": 1,
+    "estimatedMs": 2064
+  },
+  "mountainOutlinePaths": 9
+}
