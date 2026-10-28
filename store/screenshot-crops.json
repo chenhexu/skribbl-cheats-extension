@@ -1,0 +1,130 @@
+[
+  {
+    "source": "exemple_screenshot_new5.png",
+    "folder": "screenshots",
+    "output": "01-swordfish-1280x800.png",
+    "crop": {
+      "left": 548,
+      "top": 40,
+      "width": 1744,
+      "height": 1090
+    },
+    "width": 1280,
+    "height": 800,
+    "sourceWidth": 2292,
+    "sourceHeight": 1350,
+    "sourceSHA256": "4518279cc9e0aebb66d36e014efa4bbcee6b24e0f010472511ff3c7175084423"
+  },
+  {
+    "source": "exemple_screenshot_new.png",
+    "folder": "screenshots",
+    "output": "02-cola-1280x800.png",
+    "crop": {
+      "left": 0,
+      "top": 0,
+      "width": 1696,
+      "height": 1060
+    },
+    "width": 1280,
+    "height": 800,
+    "sourceWidth": 1711,
+    "sourceHeight": 1243,
+    "sourceSHA256": "f8fe840d930a020fa7c410c556fe10927e074c3059bad3201bc88d1e0d57a279"
+  },
+  {
+    "source": "exemple_screenshot_new3.png",
+    "folder": "screenshots",
+    "output": "03-main-subject-640x400.png",
+    "crop": {
+      "left": 0,
+      "top": 25,
+      "width": 480,
+      "height": 300
+    },
+    "width": 640,
+    "height": 400,
+    "sourceWidth": 490,
+    "sourceHeight": 449,
+    "sourceSHA256": "22511035a1f2b868cb5ef14779879ba018648875057a4da522aa4c3e9d9dc32e"
+  },
+  {
+    "source": "exemple_screenshot_new4.png",
+    "folder": "screenshots",
+    "output": "04-truck-drawing-640x400.png",
+    "crop": {
+      "left": 0,
+      "top": 25,
+      "width": 472,
+      "height": 295
+    },
+    "width": 640,
+    "height": 400,
+    "sourceWidth": 477,
+    "sourceHeight": 418,
+    "sourceSHA256": "146bf82f73cab63e87ebd47d463ffc19fa228be2c3668e394d77ce4296b162d3"
+  },
+  {
+    "source": "exemple_screenshot_new7.png",
+    "folder": "screenshots",
+    "output": "05-related-words-640x400.png",
+    "crop": {
+      "left": 5,
+      "top": 12,
+      "width": 496,
+      "height": 310
+    },
+    "width": 640,
+    "height": 400,
+    "sourceWidth": 509,
+    "sourceHeight": 605,
+    "sourceSHA256": "8bd2a7e0b7587497d43bbbdf8cdec2e11a206e9e15e57aa4960efdb89a6238b8"
+  },
+  {
+    "source": "exemple_screenshot_new1.png",
+    "folder": "screenshot-alternates",
+    "output": "gladiator-1280x800.png",
+    "crop": {
+      "left": 530,
+      "top": 0,
+      "width": 1744,
+      "height": 1090
+    },
+    "width": 1280,
+    "height": 800,
+    "sourceWidth": 2274,
+    "sourceHeight": 1249,
+    "sourceSHA256": "da768ce127104a6128846c5932807aa568be2ccd2bce12ec652bfab88916502f"
+  },
+  {
+    "source": "exemple_screenshot_new2.png",
+    "folder": "screenshot-alternates",
+    "output": "yo-yo-1280x800.png",
+    "crop": {
+      "left": 542,
+      "top": 0,
+      "width": 1744,
+      "height": 1090
+    },
+    "width": 1280,
+    "height": 800,
+    "sourceWidth": 2286,
+    "sourceHeight": 1246,
+    "sourceSHA256": "556f0a5e31503eb76b09a6de0e0c7530887a9ba4b044f845134127d306141298"
+  },
+  {
+    "source": "exemple_screenshot_new6.png",
+    "folder": "screenshot-alternates",
+    "output": "hint-filtering-1280x800.png",
+    "crop": {
+      "left": 0,
+      "top": 60,
+      "width": 1664,
+      "height": 1040
+    },
+    "width": 1280,
+    "height": 800,
+    "sourceWidth": 1677,
+    "sourceHeight": 1191,
+    "sourceSHA256": "29db03eeb2f8a913a93c08c398241ce248d4bbe4fdb1c4d5d40c01ed92c072c2"
+  }
+]

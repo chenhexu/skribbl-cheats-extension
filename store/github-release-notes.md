@@ -1,27 +1,27 @@
-Hint-aware related-word search, a refined image Auto-Drawer, and three local AI choices: **Chrome GPU**, **Chrome CPU**, or an optional **Python terminal service**.
+Skribbl Auto Guesser + Auto Drawer 2.3.7 adds a safer drawing startup, independent outline detail and corrected Chrome Web Store packaging, with refreshed instructions and real user screenshots.
 
-### Download and install
+### Install
 
-Download **skribbl-auto-guesser-2.3.3.zip**, extract it, then open `chrome://extensions` → Developer mode → Load unpacked and select the extracted folder. Refresh Skribbl after loading or updating. Disable older copies to avoid duplicate panels.
+Download **skribbl-auto-guesser-2.3.7.zip**, extract it into a permanent folder, then open `chrome://extensions` → Developer mode → Load unpacked. Select the extracted folder and refresh Skribbl. Disable an older installed copy to avoid duplicate panels.
 
-The extension ZIP includes all browser AI models and runtimes. **No Python, npm, paid AI account or API key is required for Chrome modes.** Open Local AI setup, explicitly choose Chrome CPU/GPU and click Load AI models before playing. The existing default remains Python until changed. GPU support depends on the browser and graphics driver; Chrome CPU is an alternative.
+The ZIP includes the browser AI models and runtimes. Chrome CPU/GPU modes require no Python, npm, paid AI account or API key. Choose an engine in **Local AI setup**, click **Load AI models**, and wait for readiness before playing. GPU support depends on the device; Chrome CPU and the optional Python companion service remain available.
 
-### Highlights
+### Changes since 2.3.3
 
-- Resize the floating Auto-Drawer from every edge and corner. Both panels can reach the browser content edges without a forced gap and stay reachable when the window shrinks.
-- Word-bank AI reconnects after interrupted Chrome messages, including documents closed while opening. Narrow curved ink uses parallel-edge pencil planning instead of hundreds of tiny fills.
-- Required permissions are reduced to Storage and Debugger. Offscreen is now optional when enabling Chrome AI; Python access remains optional and limited to port 8765.
-- Search spelling, categories and meaning within the detected hint's word lengths, spaces and revealed letters. Choose relevance or alphabetical sorting, inspect match reasons, and clear the search automatically on a new round.
-- Review image previews, use full scenery or a selected subject, correct subject parts manually, amplify dark colors and simplify up to 24 colors per layer.
-- Auto settings choose per-image suggestions while preserving manual Outline detail. Drawing speed, target and subject/background preferences are remembered.
-- Start/Stop guessing and drawing remain user controlled, with chat-delivery confirmation, spam recovery and improved drawing cancellation.
-- Suitable thick lines use a wider pencil rather than thin boundary tracing followed by Fill; shape checks preserve the fallback for irregular regions.
-- Dedicated AI setup shows readiness and measures word-search speed. Chrome inference uses packaged local models; Python remains optional.
+- Attach the drawing debugger first and wait at least 400 ms before sending drawing input, including when canvas coordinates stay unchanged. Wait for layout stability and cancel promptly if the canvas/viewport moves later. Chrome's debugger notice remains visible.
+- Adjust **Outline detail** without disabling Auto settings or cancelling an in-flight suggestion. Other image settings keep their existing manual/Auto behavior.
+- Keep only the extension's root `manifest.json` in the package. AI model metadata now uses `model-index.json`; packaging rejects duplicate or nested manifests.
+- Update the extension name, summary, permission explanations and store materials. Include five listing screenshots, three alternatives and untouched source captures.
+- Add drawing/search examples to the README and organize branding sources, test images and archived experiments into documented folders.
 
-[Usage guide](https://github.com/chenhexu/skribbl-cheats-extension/blob/main/docs/USAGE.md) · [Changes](https://github.com/chenhexu/skribbl-cheats-extension/blob/main/CHANGELOG.md) · [Privacy](https://github.com/chenhexu/skribbl-cheats-extension/blob/main/PRIVACY.md) · [Report issues](https://github.com/chenhexu/skribbl-cheats-extension/issues)
+Word suggestions stay within the detected hint bank. Image previews are plans, and drawing speed/detail depends on the image, browser and game. Optional AI runs on the user's computer. Required permissions remain Storage and Debugger; Offscreen and Python localhost access remain optional. Runtime/model assets and permission declarations are unchanged from 2.3.6.
 
-Source archives exclude generated model binaries. Developers can restore verified models from the extension ZIP using `tools/restore-browser-models.ps1`; see the development guide. The adjacent `.zip.json` contains the extension package's SHA256 and source revision.
+### Other downloads
 
-**chrome-web-store-kit-2.3.3.zip** contains listing text, current screenshots, icons, permission explanations and reviewer instructions. It is a submission companion, not the installable extension. No Chrome Web Store submission or publication has been performed.
+**chrome-web-store-kit-2.3.7.zip** contains listing text, screenshots, icons, permission explanations and reviewer instructions. It is separate from the installable extension ZIP. The adjacent extension **.zip.json** records SHA256, source revision and package files.
 
-Validation includes 93 Node checks, 32 UI checks (three Python-only cases skipped), real loaded-extension AI recovery and permission grants, and extracted-package storage/port-scope checks. Earlier model validation also exercised Python and Chrome GPU. Performance and foreground selection depend on the device and image; review previews before drawing. See repository validation notes for scope and evidence.
+The user submitted version 2.3.7 to the Chrome Web Store for review. This GitHub release is an unpacked-install download; the store listing is awaiting Google's review and has no installation URL yet.
+
+Validation: 94 Node checks and 27 browser checks passed; one Python-service-only browser check was skipped. Browser tests used isolated profiles and synthetic game markup, including simulated debugger-banner timing. Package checks verify a single root manifest and unchanged submitted runtime/model bytes. See `docs/VALIDATION_2.3.7.md` for scope.
+
+See the repository's README, usage guide and privacy policy for setup, data use and troubleshooting.

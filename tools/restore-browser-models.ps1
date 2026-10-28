@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $projectPath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $archivePath = (Resolve-Path -LiteralPath $Archive).Path
 $modelPath = [System.IO.Path]::GetFullPath((Join-Path $projectPath 'browser-ai/models'))
-$manifest = Get-Content -LiteralPath (Join-Path $modelPath 'manifest.json') -Raw | ConvertFrom-Json
+$manifest = Get-Content -LiteralPath (Join-Path $modelPath 'model-index.json') -Raw | ConvertFrom-Json
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
 try {

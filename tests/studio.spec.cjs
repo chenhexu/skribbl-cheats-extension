@@ -102,6 +102,28 @@ test('a delayed auto suggestion cannot overwrite a manual slider adjustment',asy
   await expect(page.getByRole('button',{name:'Process image',exact:true})).toBeEnabled();expect(await page.evaluate(()=>studio.getSession().settings)).toEqual(manual);expect(manual.merge).toBe(29);await expect(page.locator('.auto-note')).toContainText('Manual settings');
 });
 
+test('dragging outline detail preserves Auto and its suggestions while invalidating the old plan',async({page})=>{
+  await page.goto('/');await upload(page,flat);await process(page);
+  const before=await page.evaluate(()=>studio.getSession().settings),slider=page.getByLabel('Outline detail',{exact:true}),box=await slider.boundingBox();
+  await page.mouse.move(box.x+box.width*.5,box.y+box.height/2);await page.mouse.down();await page.mouse.move(box.x+box.width*.9,box.y+box.height/2,{steps:5});await page.mouse.up();
+  const detail=Number(await slider.inputValue());expect(detail).not.toBe(before.detail);
+  await expect(page.getByLabel('Auto settings',{exact:true})).toBeChecked();
+  expect(await page.evaluate(()=>studio.getSession().settings)).toEqual({...before,detail});
+  await expect(page.getByRole('button',{name:'Download plan JSON',exact:true})).toBeDisabled();
+  await process(page);const plan=await readPlan(page);expect(plan.settings.detail).toBe(detail);expect(plan.auto.version).toBe(1);
+  await page.getByLabel('Auto settings',{exact:true}).uncheck();await slider.fill('43');await expect(page.getByLabel('Auto settings',{exact:true})).not.toBeChecked();
+});
+
+test('outline adjustment keeps an in-flight Auto suggestion running and uses the latest manual detail',async({page})=>{
+  await page.goto('/');await page.evaluate(()=>{const original=SAGDrawingEngine.suggestSettings;SAGDrawingEngine.suggestSettings=async(...args)=>{const suggestion=await original(...args);window.autoSignal=args[2].signal;await new Promise(resolve=>window.releaseAutoSuggestion=resolve);return suggestion;};});
+  await page.getByLabel('Upload image',{exact:true}).setInputFiles({name:'flat.svg',mimeType:'image/svg+xml',buffer:flat});
+  await expect.poll(()=>page.evaluate(()=>typeof window.releaseAutoSuggestion)).toBe('function');
+  await page.getByLabel('Outline detail',{exact:true}).fill('94');await expect(page.getByLabel('Auto settings',{exact:true})).toBeChecked();
+  expect(await page.evaluate(()=>autoSignal.aborted)).toBe(false);await page.evaluate(()=>releaseAutoSuggestion());
+  await expect(page.getByRole('button',{name:'Process image',exact:true})).toBeEnabled();await expect(page.locator('.auto-note')).not.toContainText('Manual settings');
+  await process(page);const plan=await readPlan(page);expect(plan.settings.detail).toBe(94);expect(plan.auto.version).toBe(1);
+});
+
 test('auto follows a crop and round-trips Auto/manual settings into the compact viewer',async({page},info)=>{
   const mixed=Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><defs><pattern id="texture" width="6" height="6" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="#1644bc"/><rect width="3" height="3" fill="#de8824"/><rect x="3" y="3" width="3" height="3" fill="#fa3467"/></pattern></defs><rect width="400" height="600" fill="#ef130b"/><rect x="400" width="400" height="600" fill="url(#texture)"/></svg>`);
   await page.goto('/');await page.getByLabel('Outline detail',{exact:true}).fill('83');await page.getByLabel('Auto settings',{exact:true}).check();await upload(page,mixed,'mixed.svg');const before=await page.evaluate(()=>studio.getSession());
@@ -110,7 +132,10 @@ test('auto follows a crop and round-trips Auto/manual settings into the compact 
   const cropped=await page.evaluate(()=>studio.getSession());expect(cropped.settings.colors).toBe(2);expect(cropped.settings.detail).toBe(before.settings.detail);expect(cropped.settings.detail).toBe(83);
   await page.evaluate(async()=>{const host=document.createElement('div');host.id='session-compact';host.style.width='320px';document.body.append(host);window.autoPanel=SAGDrawerStudio.mount(host,{compact:true});await autoPanel.loadSession(studio.getSession());});
   const compact=page.locator('#session-compact');await expect(compact.getByLabel('Auto settings',{exact:true})).toBeChecked();expect(await page.evaluate(()=>autoPanel.getSession())).toEqual(cropped);
-  await page.getByLabel('Outline detail',{exact:true}).first().fill('46');const manual=await page.evaluate(()=>studio.getSession());expect(manual.auto).toBe(false);
+  await page.getByLabel('Outline detail',{exact:true}).first().fill('46');const adjusted=await page.evaluate(()=>studio.getSession());expect(adjusted.auto).toBe(true);
+  await page.evaluate(async()=>autoPanel.loadSession(studio.getSession()));expect(await page.evaluate(()=>autoPanel.getSession())).toEqual(adjusted);await expect(compact.getByLabel('Auto settings',{exact:true})).toBeChecked();
+  await compact.getByLabel('Outline detail',{exact:true}).fill('47');await expect(compact.getByLabel('Auto settings',{exact:true})).toBeChecked();
+  await page.getByLabel('Merge similar colors',{exact:true}).first().fill('29');const manual=await page.evaluate(()=>studio.getSession());expect(manual.auto).toBe(false);
   await page.evaluate(async()=>autoPanel.loadSession(studio.getSession()));expect(await page.evaluate(()=>autoPanel.getSession())).toEqual(manual);await expect(compact.getByLabel('Auto settings',{exact:true})).not.toBeChecked();
   await compact.screenshot({path:info.outputPath('auto-manual-compact.png')});expect(await compact.evaluate(el=>el.shadowRoot.querySelector('.studio').scrollWidth)).toBeLessThanOrEqual(320);
   await page.getByRole('button',{name:'Reset crop',exact:true}).first().click();expect((await page.evaluate(()=>studio.getSession())).settings.detail).toBe(46);
@@ -121,7 +146,7 @@ test('existing line drawing and photograph process in both modes',async({page,re
   const health=await(await request.get('/health')).json(),results=[];
   await page.goto('/');
   await page.addScriptTag({content:await fs.readFile('drawer.js','utf8')});
-  for(const file of ['lvl1.jpg','lvl2.avif']){
+  for(const file of ['tests/fixtures/sample-lines.jpg','tests/fixtures/sample-car.avif']){
     await page.getByLabel('Upload image',{exact:true}).setInputFiles(path.resolve(file));await expect(page.getByRole('button',{name:'Process image',exact:true})).toBeEnabled();
     const data=await fs.readFile(file),mime=file.endsWith('avif')?'image/avif':'image/jpeg';
     const legacy=await page.evaluate(async url=>{const img=new Image();img.src=url;await img.decode();const started=performance.now();const result=window.__skribblDrawer.processImage(img,{density:3,bgThreshold:0,useWhite:true,skipDrawWhite:true,maxPoints:0,style:'realistic'});return {processingMs:performance.now()-started,points:result.points.length,legacyEstimateMs:window.__skribblDrawer.estimateTime(result.points.length,80,10)*1000};},`data:${mime};base64,${data.toString('base64')}`);
@@ -129,7 +154,7 @@ test('existing line drawing and photograph process in both modes',async({page,re
     for(const detector of health.ready?['browser','ai']:['browser']){
       await page.getByLabel('Line detection',{exact:true}).selectOption(detector);await process(page);const plan=await readPlan(page);
       results.push({file,detector,...plan.metrics,processingMs:plan.processingMs,modelMs:plan.modelMs,omitted:plan.omitted});
-      await page.locator('canvas').screenshot({path:info.outputPath(file+'-'+detector+'.png')});
+      await page.locator('canvas').screenshot({path:info.outputPath(path.basename(file)+'-'+detector+'.png')});
     }
   }
   await fs.writeFile(info.outputPath('measurements.json'),JSON.stringify(results,null,2));

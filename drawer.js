@@ -1630,6 +1630,7 @@
     if (!run) return;
     run.cancelled = true;
     if (run.monitor) clearInterval(run.monitor);
+    run.unwatch?.();
     if(!run.stopping)run.stopping=planMessage({action:'planCancel',runId:run.id}).finally(()=>{
       if (activePlanRun === run) { closePlanSizePicker();activePlanRun = null; }
     });
@@ -1748,6 +1749,26 @@
   function isPlanDrawingTurn() {
     return !planTurnProblem();
   }
+  function planLayout(canvas) {
+    const rect=canvas.getBoundingClientRect(),visual=window.visualViewport;
+    return {rect,values:[rect.left,rect.top,rect.width,rect.height,window.innerWidth,window.innerHeight,visual?.width||window.innerWidth,visual?.height||window.innerHeight,visual?.offsetLeft||0,visual?.offsetTop||0],scale:visual?.scale||1};
+  }
+  function samePlanLayout(a,b) {
+    return a&&b&&Math.abs(a.scale-b.scale)<0.0001&&a.values.every((value,i)=>Math.abs(value-b.values[i])<0.25);
+  }
+  async function settledPlanLayout(canvas,check) {
+    // Attaching opens Chrome's infobar asynchronously. Always pause before the
+    // first press, even if canvas coordinates stay unchanged, so its animation
+    // cannot interrupt a held stroke. Then wait for any layout transition too.
+    const started=performance.now();let stableSince=started,previous=planLayout(canvas);
+    while(performance.now()-started<3000){
+      check();await delay(25);check();const next=planLayout(canvas),now=performance.now();
+      if(!samePlanLayout(previous,next))stableSince=now;
+      previous=next;
+      if(now-started>=400&&now-stableSince>=200)return next;
+    }
+    throw new Error('Game canvas is still moving. Wait for the browser layout to settle, then start drawing again.');
+  }
   async function startPlan(plan, options = {}) {
     if(![1,2].includes(plan?.version) || plan.width!==CANVAS_W || plan.height!==CANVAS_H || !Array.isArray(plan.strokes) || !plan.strokes.length)throw new Error('No valid drawing plan. Process an image first.');
     const request=planRequest+1;
@@ -1760,10 +1781,9 @@
     if(!canDraw())throw new Error(planTurnProblem()||'Start drawing during your own drawing turn.');
     const run={id:'plan-'+Date.now()+'-'+Math.random().toString(36).slice(2),cancelled:false,monitor:null,skipped:[],reason:'Drawing stopped.'};
     activePlanRun=run;
-    const initialRect=canvas.getBoundingClientRect();
-    if(initialRect.left<0||initialRect.top<0||initialRect.right>window.innerWidth||initialRect.bottom>window.innerHeight){activePlanRun=null;throw new Error('Keep the complete game canvas visible before starting. Resize or scroll the game into view.');}
+    let initialLayout=null;
     const initialWord=document.querySelector('#game-word .word')?.textContent;
-    const valid=()=>{const r=canvas.getBoundingClientRect();return canvas.isConnected&&r.width>0&&r.height>0&&Math.abs(r.left-initialRect.left)<2&&Math.abs(r.top-initialRect.top)<2&&Math.abs(r.width-initialRect.width)<2&&Math.abs(r.height-initialRect.height)<2&&canDraw()&&document.querySelector('#game-word .word')?.textContent===initialWord;};
+    const valid=()=>{const layout=planLayout(canvas);return canvas.isConnected&&layout.rect.width>0&&layout.rect.height>0&&(!initialLayout||samePlanLayout(initialLayout,layout))&&canDraw()&&document.querySelector('#game-word .word')?.textContent===initialWord;};
     const check=()=>{if(activePlanRun!==run||run.cancelled)throw Object.assign(new Error(run.reason),{name:'AbortError'});if(!valid())throw Object.assign(new Error('Drawing turn ended or canvas moved. Reposition and start again.'),{name:'AbortError'});};
     let eventMs=plan.timing?.eventMs||plan.settings.eventMs||8,completed=0,completedMoves=0,brush=-1,port=null;
     const engine=window.SAGDrawingEngine,totalMoves=plan.strokes.reduce((sum,s)=>sum+engine.strokeMoves(s),0);
@@ -1771,7 +1791,16 @@
       try{await planMessage({action:'planBegin',runId:run.id});}catch(error){if(run.cancelled||error.name==='AbortError')throw Object.assign(error,{name:'AbortError'});throw new Error('Continuous-path drawing requires Chrome debugger access: '+error.message);}
       check();
       try{port=chrome.runtime.connect({name:'planKeepAlive:'+run.id});}catch(_){}
-      run.monitor=setInterval(()=>{if(!valid()&&!run.cancelled){run.reason='Drawing turn ended or canvas moved.';stopPlan().catch(()=>{});}},100);
+      options.onProgress?.({fraction:0,previewFraction:0,completed:0,stage:'Waiting for the browser layout to settle',skipped:[]});
+      initialLayout=await settledPlanLayout(canvas,check);check();
+      const initialRect=initialLayout.rect;
+      if(initialRect.left<0||initialRect.top<0||initialRect.right>window.innerWidth||initialRect.bottom>window.innerHeight)throw new Error('Keep the complete game canvas visible before starting. Resize or scroll the game into view.');
+      const guard=()=>{if(!run.cancelled&&!valid()){run.reason='Drawing turn ended or canvas moved. Drawing stopped before continuing with shifted coordinates.';stopPlan().catch(()=>{});}};
+      run.monitor=setInterval(guard,16);
+      window.addEventListener('resize',guard);window.addEventListener('scroll',guard,true);
+      window.visualViewport?.addEventListener('resize',guard);window.visualViewport?.addEventListener('scroll',guard);
+      const observer=new ResizeObserver(guard);observer.observe(canvas);
+      run.unwatch=()=>{window.removeEventListener('resize',guard);window.removeEventListener('scroll',guard,true);window.visualViewport?.removeEventListener('resize',guard);window.visualViewport?.removeEventListener('scroll',guard);observer.disconnect();};
       const selectTool=async index=>{
         const tools=[...document.querySelectorAll('#game-toolbar .toolbar-group-tools .tool')],name=index===1?'Fill':'Brush',graphic=index===1?'fill.gif':'pen.gif';
         const control=tools.find(el=>el.dataset.tooltip===name||el.querySelector('.icon')?.style.backgroundImage.includes(graphic))||tools[index];
@@ -1805,6 +1834,7 @@
           // Recheck between contours and their bucket click, and for consecutive
           // same-color strokes. A changed primary color must not poison a fill.
           closePlanSizePicker();await selectPlanColor(stroke.colorId,run,check);
+          check();
           const rect=canvas.getBoundingClientRect();
           // Aim at game-pixel centers, including when CSS scales the canvas.
           // Rounding viewport coordinates can move a seed onto its boundary.
@@ -1822,6 +1852,7 @@
       return {skipped:run.skipped,elapsedMs:performance.now()-started,eventMs};
     } finally {
       if(run.monitor)clearInterval(run.monitor);
+      run.unwatch?.();
       try{port?.disconnect();}catch(_){}
       await planMessage({action:'planCancel',runId:run.id}).catch(()=>{});
       if(activePlanRun===run){closePlanSizePicker();activePlanRun=null;}

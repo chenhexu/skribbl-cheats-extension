@@ -10,6 +10,8 @@ __pycache__/
 test-results/
 playwright-report/
 dist/
+# Original loose captures and old installers retained during project cleanup.
+local/
 # Generated browser AI assets are distributed in the release ZIP.
 browser-ai/models/*.onnx
 browser-ai/models/*.bin

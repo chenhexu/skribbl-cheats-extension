@@ -138,7 +138,7 @@ test('compact studio fits a narrow drawer and cancels processing without stale c
   await page.goto('/');await page.evaluate(()=>{
     document.querySelector('main').hidden=true;const host=document.createElement('div');host.id='compact';host.style.cssText='width:320px;margin:20px';document.body.append(host);window.compact=SAGDrawerStudio.mount(host,{compact:true,draw:async()=>{},stop:()=>{}});
   });
-  const root=page.locator('#compact');await root.getByLabel('Upload image',{exact:true}).setInputFiles('lvl2.avif');await expect(root.getByRole('button',{name:'Process image',exact:true})).toBeEnabled();
+  const root=page.locator('#compact');await root.getByLabel('Upload image',{exact:true}).setInputFiles('tests/fixtures/sample-car.avif');await expect(root.getByRole('button',{name:'Process image',exact:true})).toBeEnabled();
   await root.getByRole('button',{name:'Process image',exact:true}).click();await root.getByRole('button',{name:'Stop',exact:true}).click();await expect(root.locator('.status')).toHaveText('Stopped.');await expect(root.getByRole('button',{name:'Start drawing',exact:true})).toBeDisabled();
   await root.getByRole('button',{name:'Process image',exact:true}).click();await expect(root.getByRole('button',{name:'Start drawing',exact:true})).toBeEnabled({timeout:90000});await root.screenshot({path:info.outputPath('compact-preview.png')});
   expect(await root.evaluate(el=>el.shadowRoot.querySelector('.studio').scrollWidth)).toBeLessThanOrEqual(320);

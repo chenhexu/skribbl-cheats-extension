@@ -1,29 +1,29 @@
-# Chrome Web Store submission fields — 2.3.3
+# Chrome Web Store submission fields — 2.3.7
 
-Updated October 28, 2026. These descriptions match the current standalone extension. Replace the older submission text; the rejected 2.1.0 draft does not update itself when local files change.
+Updated October 28, 2026. These descriptions match Skribbl Auto Guesser + Auto Drawer 2.3.7. Replace the older submission text; the rejected 2.1.0 draft does not update itself when local files change.
 
 ## Rejection addressed: Purple Potassium / unused storage
 
-The screenshot rejects **2.1.0** for requesting `storage` without using it. The current **2.3.3** package uses `chrome.storage.local` for the AI engine choice, five shared Auto-Drawer preferences and measured drawing-event latency. Legacy guesser settings/word caches separately use the site's `localStorage`.
+The screenshot rejects **2.1.0** for requesting `storage` without using it. The current **2.3.7** package uses `chrome.storage.local` for the AI engine choice, five shared Auto-Drawer preferences and measured drawing-event latency. Legacy guesser settings/word caches separately use the site's `localStorage`.
 
-Real extracted-ZIP tests verified preference writes, sharing across viewers, and persistence after a full browser restart. Removing `storage` from an isolated test copy made the same save/restore features fail. Keep the permission for these implemented features; do not upload the old rejected ZIP. See [audit evidence](docs/STORE_PERMISSIONS_AUDIT.md).
+The 2.3.3 extracted-ZIP audit verified preference writes, sharing across viewers, and persistence after a full browser restart. Version 2.3.7 retains the same permission declarations and storage implementation. Removing `storage` from an isolated test copy made the same save/restore features fail. Keep the permission for these implemented features; do not upload the old rejected ZIP. See [audit evidence](docs/STORE_PERMISSIONS_AUDIT.md).
 
 ## Single-purpose description
 
 ```text
-Assist Skribbl play with hint-matching word suggestions and user-controlled guessing, plus optional tools that turn uploaded images into previews and drawing plans for the game canvas.
+Help users play skribbl.io with hint-based word search, user-controlled automatic guesses and image-to-canvas drawing tools, with optional AI running on their computer.
 ```
 
 ## Storage justification
 
 ```text
-chrome.storage.local saves the AI engine choice (Chrome GPU, Chrome CPU or Python service), five Auto-Drawer preferences (drawing speed, target time, subject/background mode, line detector and color amplification), and measured drawing-event latency. Choices persist across browser restarts and are shared between the game panel and extension-owned viewers. Data stays on the device. Legacy guesser settings and word caches separately use the site's localStorage.
+chrome.storage.local saves the selected AI engine, Auto-Drawer preferences (speed, target time, subject/background mode, line detector and color amplification), and measured drawing-event latency used for time estimates. These settings persist across browser restarts and are shared between the Skribbl panel and extension-owned viewers. No uploaded images or search history are saved through this permission. Legacy guesser settings and word-list caches separately use the site's localStorage.
 ```
 
 ## Optional Offscreen justification
 
 ```text
-Offscreen is an optional permission requested when the user chooses a Chrome AI engine or clicks Load AI models in AI setup. The engine creates the packaged browser-ai/offscreen.html document with the WORKERS reason. It hosts a dedicated worker running packaged ONNX models for word suggestions, foreground masks and line detection. This keeps inference off the game UI thread and available across tabs without a permanent visible tab. The document is closed when changing engines or unloading models. Python mode and ordinary guessing do not need this grant. Real extension tests verify the default ungranted state, permission grant on engine choice, creation, inference, closure and backend persistence.
+Optional access requested in Local AI setup when the user selects Chrome CPU/GPU or clicks Load AI models. A packaged offscreen document creates a dedicated worker, using the WORKERS reason, to run packaged AI models for related-word search, subject detection and line detection without blocking the game UI or requiring a permanently visible setup tab. Models run locally using packaged JavaScript and WebAssembly. The document closes when the user unloads models or changes engines. Python mode and ordinary text/category matching do not require this permission.
 ```
 
 The extension-page CSP enables wasm-unsafe-eval for packaged ONNX Runtime WebAssembly. It does not enable remote scripts or unsafe-eval. Browser model/runtime/tokenizer files and licenses are included in the ZIP.
@@ -31,8 +31,16 @@ The extension-page CSP enables wasm-unsafe-eval for packaged ONNX Runtime WebAss
 ## Debugger justification (drawing)
 
 ```text
-The optional Auto-Drawer uses chrome.debugger and Chrome DevTools Protocol input commands to perform the drawing the user starts on the Skribbl canvas. It sends trusted mouse presses, held-button moves, releases and tool clicks, and detaches when drawing finishes, is stopped, or fails. The permission supports this implemented drawing feature; it is not used to collect browsing history or monitor unrelated sites.
+Used only for Auto-Drawer input on the user's skribbl.io tab after the user starts drawing. Chrome DevTools Protocol input commands draw strokes and select the game's brushes, colors and fill tool. Chrome displays its debugger notice; the extension waits for startup to settle before drawing. Input is cancelled and the debugger detaches when drawing finishes, the user stops it, or a drawing error occurs. This permission is not used to inspect network traffic, collect browsing history or monitor unrelated tabs. Drawing input is sent to Skribbl as part of gameplay.
 ```
+
+## Host permission justification — paste into the dashboard field
+
+```text
+Content scripts run only on https://skribbl.io/* to read the displayed hint and relevant game feedback, show matching words, submit user-controlled guesses and provide Auto-Drawer canvas controls. Optional access to http://127.0.0.1:8765/* is requested in Local AI setup for the user's Python service. It sends an image for subject/line detection, or the typed query and hint-eligible candidates for related-word search; responses are images or JSON data. This connection is restricted to port 8765. Chrome CPU/GPU AI runs inside the extension without localhost access. No access to unrelated websites is requested.
+```
+
+The dashboard field covers both the Skribbl content-script matches and optional loopback origin. Replace the old site-only explanation with the combined text above. Each permission justification is under 1,000 characters. Required permissions remain Debugger and Storage; Offscreen and Python host access remain optional.
 
 ## Skribbl site access / content-script matches
 
@@ -68,4 +76,10 @@ Use the current [PRIVACY.md](PRIVACY.md) consistently with the listing/form answ
 
 ## Submission handling
 
-Upload the current `dist/skribbl-auto-guesser-2.3.3.zip` as an updated draft, replace outdated justifications/privacy text, and include the storage reproduction steps. The old rejection remains until a new submission is reviewed. This audit addresses the stated unused-storage issue; it does not guarantee Chrome Web Store approval or certify every other policy. No draft, appeal or publication was sent during this audit.
+Upload the current `dist/skribbl-auto-guesser-2.3.7.zip` as an updated draft, replace outdated justifications/privacy text, and include the storage reproduction steps. The old rejection remains until a new submission is reviewed. This audit addresses the stated unused-storage issue; it does not guarantee Chrome Web Store approval or certify every other policy. No draft, appeal or publication was sent during this audit.
+
+## Dashboard guidance
+
+Paste these explanations into the existing item under Privacy practices. Leave No, I am not using remote code selected. Updating these dashboard text fields does not change the extension package or require a new package version. The yellow notice in the dashboard warns that host access may need additional review; the text above explains the implemented access, without promising a review time or approval.
+
+Checked against [Chrome privacy-field guidance](https://developer.chrome.com/docs/webstore/cws-dashboard-privacy), [Offscreen API](https://developer.chrome.com/docs/extensions/reference/api/offscreen) and [Manifest V3 code requirements](https://developer.chrome.com/docs/webstore/program-policies/mv3-requirements) on October 28, 2026.

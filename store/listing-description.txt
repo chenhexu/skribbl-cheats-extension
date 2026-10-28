@@ -1,4 +1,4 @@
-Skribbl Auto Guesser helps you find hint-matching words and turn uploaded pictures into drawings on skribbl.io. Search by spelling or meaning, review suggestions and image previews, and choose when to send guesses or start drawing.
+Skribbl Auto Guesser + Auto Drawer helps you find hint-matching words and turn uploaded pictures into drawings on skribbl.io. Search by spelling or meaning, review suggestions and image previews, and choose when to send guesses or start drawing.
 
 HINT-AWARE WORD SEARCH
 The panel reads the game's hint, including revealed letters and multiword lengths. Every suggestion must fit that hint. Type part of a word for ordinary text matching, or enable Related words to find spelling, category and meaning-based matches. For example, animal can find eligible animals, related parts or phrases; fish can find related ocean life.

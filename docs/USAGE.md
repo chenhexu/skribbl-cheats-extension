@@ -1,4 +1,4 @@
-# How to use Skribbl Auto Guesser 2.3.3
+# How to use Skribbl Auto Guesser + Auto Drawer 2.3.7
 
 [Installation](../README.md#install) · [AI engine](#choose-an-ai-engine) · [Word search](#word-search-and-guessing) · [Drawing](#drawing-workflow) · [Troubleshooting](#troubleshooting)
 
@@ -64,9 +64,9 @@ Drag the Auto-Drawer header outside the guesser to open it as a floating panel. 
 1. Expand **Auto-Drawer** and select **Colors + outlines**. Upload or drop an image. The small original thumbnail stays near the top; the processed preview appears below.
 2. Choose **Full image / scenery** for a landscape or an image you want to keep in full. Leave **Use main subject** unchecked. No foreground AI runs during processing in this mode.
 3. For an object, check **Use main subject** and choose **Subject only (fastest)** or **Subject first + simplified background**. **Process image** automatically runs subject AI if no selection exists. **Find main subject (AI)** lets you inspect that selection separately. Existing manual/AI selections are reused.
-4. Leave **Auto settings** on to suggest settings from the current image, then click **Process image**. Auto leaves **Outline detail** unchanged. Raise it yourself for precise linework. Manual edits turn Auto off while keeping the other suggested values; re-enabling Auto keeps your outline detail.
+4. Leave **Auto settings** on to suggest settings from the current image, then click **Process image**. Auto leaves **Outline detail** unchanged. In the 2.3.4 preview, changing Outline detail also keeps Auto enabled; raise it yourself for precise linework, then process again. Editing an auto-controlled setting turns Auto off while keeping the other suggested values; re-enabling Auto keeps your outline detail.
 5. Compare **Original**, **Main subject**, **Simplified colors**, **Detected lines** and **Final drawing**. **Drawing path** and **Play path** show the planned order; **Pen-up travel** displays movements between strokes.
-6. Return to the Skribbl panel and click **Start drawing** during your own drawing turn. Keep the game canvas and tools visible. Chrome shows a debugger banner while drawing. **Stop** cancels the run and releases drawing input.
+6. Return to the Skribbl panel and click **Start drawing** during your own drawing turn. Keep the game canvas and tools visible. Chrome shows a debugger banner while drawing. In preview 2.3.6, the drawer attaches first and waits at least 400 ms for the banner and layout to settle before sending input. If the canvas or viewport moves later, drawing stops; keep the window position/size and page scroll steady. **Stop** also cancels during this startup pause and releases drawing input.
 
 The large viewer processes images and previews plans. It cannot draw into a game by itself. If you change settings or the image, process again before starting. Thick, fairly uniform lines automatically use a matching wider pencil when that preserves their shape; irregular regions keep bucket filling. Drawings may omit small regions/outlines to fit the selected time target; inspect the plan statistics. The target is an estimate, not a guaranteed finish time or a game rate-limit bypass.
 

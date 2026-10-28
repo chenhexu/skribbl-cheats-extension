@@ -87,5 +87,5 @@ with np.load(ROOT / 'ai-service/checkpoints/word-search/bundled-embeddings.npz',
 shutil.copyfile(ROOT / 'ai-service/checkpoints/word-search/LICENSE', OUT / 'LICENSE.minilm')
 for src, dst in [('LICENSE.u2net', 'LICENSE.u2net'), ('LICENSE.informative-drawings', 'LICENSE.informative-drawings')]:
     shutil.copyfile(ROOT / 'ai-service' / src, OUT / dst)
-files = {str(p.relative_to(OUT)).replace('\\', '/'): {'bytes': p.stat().st_size, 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in OUT.rglob('*') if p.is_file() and p.name != 'manifest.json'}
-(OUT / 'manifest.json').write_text(json.dumps({'wordModel': MODEL_ID, 'wordRevision': MODEL_REVISION, 'publicWords': len(words), 'files': files}, indent=2), encoding='utf-8')
+files = {str(p.relative_to(OUT)).replace('\\', '/'): {'bytes': p.stat().st_size, 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in OUT.rglob('*') if p.is_file() and p.name not in {'manifest.json', 'model-index.json'}}
+(OUT / 'model-index.json').write_text(json.dumps({'wordModel': MODEL_ID, 'wordRevision': MODEL_REVISION, 'publicWords': len(words), 'files': files}, indent=2), encoding='utf-8')

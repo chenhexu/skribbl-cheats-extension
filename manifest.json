@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Skribbl Auto Guesser",
-  "version": "2.3.3",
-  "version_name": "2.3.3",
-  "description": "Hint-aware word suggestions and an image Auto-Drawer for skribbl.io, with optional AI that runs on your computer.",
+  "name": "Skribbl Auto Guesser + Auto Drawer",
+  "version": "2.3.7",
+  "version_name": "2.3.7 local preview",
+  "description": "Find words by hints or meaning, send automatic guesses, and draw uploaded images on skribbl.io. Optional AI runs locally.",
   "homepage_url": "https://github.com/chenhexu/skribbl-cheats-extension",
   "icons": {"16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png"},
   "minimum_chrome_version": "116",

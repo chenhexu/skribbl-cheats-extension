@@ -3,9 +3,9 @@ const fs=require('node:fs/promises');
 const Transport=require('../plan-transport');
 const shortPlan={version:2,width:800,height:600,settings:{budget:60,eventMs:8},strokes:[{id:0,stage:'outline',colorId:1,brushSize:4,points:[{x:100,y:100},{x:300,y:220},{x:450,y:120}]}]};
 
-async function setup(page){
+async function setup(page,{onAttach}={}){
   await page.goto('/');const session=await page.context().newCDPSession(page),commands=[];let attached=false;
-  const transport=new Transport({attach:async()=>{attached=true;},detach:async()=>{attached=false;},command:async(_tab,method,params)=>{commands.push(params);return session.send(method,params);}});
+  const transport=new Transport({attach:async()=>{attached=true;await onAttach?.();},detach:async()=>{attached=false;},command:async(_tab,method,params)=>{commands.push(params);return session.send(method,params);}});
   await page.exposeFunction('__turnBridge',async msg=>{try{let value;if(msg.action==='planBegin')value=await transport.begin(1,msg.runId);else if(msg.action==='planStroke')value=await transport.stroke(1,msg.runId,msg.points);else if(msg.action==='planTool')value=await transport.tool(1,msg.runId,msg.points);else if(msg.action==='planCancel')value=await transport.cancel(1,msg.runId);return {ok:true,...value};}catch(e){return {ok:false,error:e.message,cancelled:e.name==='AbortError'};}});
   await page.evaluate(()=>{
     document.querySelector('header').hidden=true;document.querySelector('main').hidden=true;
@@ -16,8 +16,8 @@ async function setup(page){
     for(const color of SAGDrawingEngine.PALETTE){const el=document.createElement('div');el.className='color';el.style.cssText='display:inline-block;width:22px;height:22px;background:'+color;el.onpointerdown=()=>document.querySelector('#color-preview-primary').style.fill=color;wrapper.querySelector('.colors .top').append(el);}
     wrapper.querySelectorAll('.tool').forEach((el,index)=>{el.dataset.tooltip=index?'Fill':'Brush';el.onclick=()=>wrapper.querySelectorAll('.tool').forEach((tool,i)=>tool.classList.toggle('selected',i===index));});
     const canvas=wrapper.querySelector('canvas'),ctx=canvas.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,800,600);window.inputEvents=[];let pressed=false;
-    canvas.addEventListener('pointerdown',event=>{pressed=true;canvas.setPointerCapture(event.pointerId);const r=canvas.getBoundingClientRect();ctx.beginPath();ctx.moveTo(event.clientX-r.left,event.clientY-r.top);inputEvents.push({type:'down',trusted:event.isTrusted,buttons:event.buttons});});
-    canvas.addEventListener('pointermove',event=>{inputEvents.push({type:'move',trusted:event.isTrusted,buttons:event.buttons});if(pressed&&event.buttons===1){const r=canvas.getBoundingClientRect();ctx.lineWidth=4;ctx.lineTo(event.clientX-r.left,event.clientY-r.top);ctx.stroke();}});
+    canvas.addEventListener('pointerdown',event=>{pressed=true;canvas.setPointerCapture(event.pointerId);const r=canvas.getBoundingClientRect();ctx.beginPath();ctx.moveTo((event.clientX-r.left)*800/r.width,(event.clientY-r.top)*600/r.height);inputEvents.push({type:'down',trusted:event.isTrusted,buttons:event.buttons});});
+    canvas.addEventListener('pointermove',event=>{inputEvents.push({type:'move',trusted:event.isTrusted,buttons:event.buttons});if(pressed&&event.buttons===1){const r=canvas.getBoundingClientRect();ctx.lineWidth=4;ctx.lineTo((event.clientX-r.left)*800/r.width,(event.clientY-r.top)*600/r.height);ctx.stroke();}});
     canvas.addEventListener('pointerup',event=>{pressed=false;inputEvents.push({type:'up',trusted:event.isTrusted,buttons:event.buttons});if(canvas.hasPointerCapture(event.pointerId))canvas.releasePointerCapture(event.pointerId);});
     window.showOverlay=active=>{wrapper.querySelector('.overlay').classList.toggle('show',active);wrapper.querySelector('.overlay-content').style.top=active?'0':'-100%';};
     window.chrome={runtime:{id:'fixture',sendMessage:(msg,callback)=>__turnBridge(msg).then(callback),connect:()=>({disconnect(){}})},storage:{local:{set:async()=>{},get:async()=>({})}}};
@@ -25,6 +25,61 @@ async function setup(page){
   await page.addScriptTag({content:await fs.readFile('drawer.js','utf8')});
   return {commands,isAttached:()=>attached};
 }
+
+test('debugger startup waits for a delayed viewport resize and animated canvas before measuring input',async({page},info)=>{
+  await page.exposeFunction('__bannerResize',()=>page.setViewportSize({width:1100,height:950}));
+  const {commands,isAttached}=await setup(page,{onAttach:()=>page.evaluate(()=>{
+    window.firstPaintAt=0;window.layoutSettledAt=0;
+    const wrapper=document.querySelector('#game-wrapper'),canvas=document.querySelector('#game-canvas canvas');
+    canvas.style.width='800px';canvas.style.height='600px';canvas.getBoundingClientRect();
+    wrapper.style.transition='top 180ms linear';canvas.style.transition='width 180ms linear,height 180ms linear';
+    canvas.addEventListener('transitionend',event=>{if(event.propertyName==='height')layoutSettledAt=performance.now();});
+    canvas.addEventListener('pointerdown',()=>{firstPaintAt=performance.now();},{once:true});
+    setTimeout(async()=>{await __bannerResize();wrapper.style.top='72px';canvas.style.width='740px';canvas.style.height='555px';},60);
+  })});
+  await page.evaluate(plan=>__skribblDrawer.startPlan(plan),shortPlan);
+  const layout=await page.evaluate(()=>{const canvas=document.querySelector('#game-canvas canvas'),r=canvas.getBoundingClientRect(),ctx=canvas.getContext('2d');return {x:r.left,y:r.top,width:r.width,height:r.height,firstPaintAt,layoutSettledAt,ink:[...ctx.getImageData(300,220,1,1).data],outside:[...ctx.getImageData(140,260,1,1).data]};});
+  expect(layout.layoutSettledAt).toBeGreaterThan(0);expect(layout.firstPaintAt-layout.layoutSettledAt).toBeGreaterThan(150);
+  const down=commands.find(command=>command.type==='mousePressed');expect(down.x).toBeCloseTo(layout.x+100.5*layout.width/800,4);expect(down.y).toBeCloseTo(layout.y+100.5*layout.height/600,4);
+  expect(commands.filter(command=>command.type==='mousePressed')).toHaveLength(1);expect(commands.at(-1)).toMatchObject({type:'mouseReleased',buttons:0});expect(isAttached()).toBe(false);
+  expect(layout.ink).toEqual([0,0,0,255]);expect(layout.outside).toEqual([255,255,255,255]);
+  await page.locator('#game-canvas canvas').screenshot({path:info.outputPath('settled-debugger-layout.png')});
+});
+
+test('debugger startup delays the first press even when the canvas coordinates do not change',async({page})=>{
+  const {commands,isAttached}=await setup(page,{onAttach:()=>page.evaluate(()=>{
+    window.attachedAt=performance.now();window.firstPaintAt=0;
+    document.querySelector('#game-canvas canvas').addEventListener('pointerdown',()=>{firstPaintAt=performance.now();},{once:true});
+  })});
+  await page.evaluate(plan=>__skribblDrawer.startPlan(plan),shortPlan);
+  expect(await page.evaluate(()=>firstPaintAt-attachedAt)).toBeGreaterThanOrEqual(400);
+  expect(commands.filter(command=>command.type==='mousePressed')).toHaveLength(1);
+  expect(commands.at(-1)).toMatchObject({type:'mouseReleased',buttons:0});expect(isAttached()).toBe(false);
+});
+
+for(const resizeEvent of [true,false])test('a '+(resizeEvent?'viewport resize':'one-pixel canvas shift')+' during a boundary releases input and never bucket-fills the unclosed shape',async({page})=>{
+  const {commands,isAttached}=await setup(page);
+  await page.evaluate(resizeEvent=>{
+    let moves=0;document.querySelector('#game-canvas canvas').addEventListener('pointermove',event=>{
+      if(event.buttons!==1||++moves!==3)return;
+      document.querySelector('#game-wrapper').style.left=resizeEvent?'44px':'21px';
+      if(resizeEvent)window.dispatchEvent(new Event('resize'));
+    });
+  },resizeEvent);
+  const points=Array.from({length:201},(_,i)=>({x:300+100*Math.cos(i/200*Math.PI*2),y:250+100*Math.sin(i/200*Math.PI*2)}));
+  const region={...shortPlan,strokes:[{id:0,kind:'region',stage:'fill',colorId:1,brushSize:4,contours:[points],seeds:[{x:300,y:250}]}]};
+  expect(await page.evaluate(plan=>__skribblDrawer.startPlan(plan).then(()=> 'completed',e=>e.name),region)).toBe('AbortError');
+  expect(commands.filter(command=>command.type==='mousePressed')).toHaveLength(1);expect(commands.filter(command=>command.type==='mouseMoved').length).toBeLessThan(8);
+  expect(commands.at(-1)).toMatchObject({type:'mouseReleased',buttons:0});expect(isAttached()).toBe(false);
+  expect(await page.evaluate(()=>document.querySelector('#game-toolbar .tool[data-tooltip="Fill"]').classList.contains('selected'))).toBe(false);
+});
+
+test('Stop during debugger layout settling cannot begin drawing later',async({page})=>{
+  const {commands,isAttached}=await setup(page);
+  await page.evaluate(plan=>{window.outcome=null;__skribblDrawer.startPlan(plan).then(()=>outcome='completed',e=>outcome=e.name);},shortPlan);
+  await expect.poll(isAttached,{intervals:[10]}).toBe(true);await page.evaluate(()=>__skribblDrawer.stopPlan());
+  await expect.poll(()=>page.evaluate(()=>outcome)).toBe('AbortError');await page.waitForTimeout(450);expect(commands).toHaveLength(0);expect(isAttached()).toBe(false);
+});
 
 test('retained reveal after a round does not reject the next drawing turn',async({page},info)=>{
   const {commands,isAttached}=await setup(page);
@@ -82,7 +137,7 @@ test('first-round brush picker opens through an intercepted preview and delayed 
 test('Stop during first-round picker initialization cancels before any canvas input and restart works',async({page})=>{
   const {commands,isAttached}=await setup(page);await nativePicker(page,{delay:400});
   await page.evaluate(plan=>{window.outcome=null;__skribblDrawer.startPlan(plan).then(()=>outcome='completed',e=>outcome=e.name);},shortPlan);
-  await expect.poll(()=>page.evaluate(()=>pickerOpens)).toBe(1);await page.evaluate(()=>__skribblDrawer.stopPlan());
+  await expect.poll(()=>page.evaluate(()=>pickerOpens),{intervals:[10]}).toBe(1);await page.evaluate(()=>__skribblDrawer.stopPlan());
   await expect.poll(()=>page.evaluate(()=>outcome)).toBe('AbortError');expect(await page.evaluate(()=>inputEvents)).toEqual([]);expect(isAttached()).toBe(false);
   await expect(page.locator('#game-toolbar .sizes .container')).not.toHaveClass(/open/);
   await expect(page.locator('#game-toolbar .sizes .size')).toHaveCount(5);

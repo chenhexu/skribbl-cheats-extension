@@ -76,7 +76,7 @@
         <div class="workflow-actions"><div class="subject-control"><label><input aria-label="Use main subject" type="checkbox" name="useSubject">Use main subject</label><button data-act="subject-ai" title="Select a subject with local AI; enables Use main subject" disabled>Find main subject (AI)</button></div><div class="auto-control enabled"><input aria-label="Auto settings" type="checkbox" name="auto" checked><button data-act="auto" title="Choose settings for this image" disabled>Auto settings</button></div></div>
         <div class="settings focus-settings"><label>Draw<select name="focus" aria-label="Subject and background"><option value="none">Full image / scenery</option><option value="subject">Subject only (fastest)</option><option value="subject-background">Subject first + simplified background</option></select></label></div>
         <div class="focus-note" aria-live="polite">Full scenery keeps colors and outlines across the image. Subject selection is optional.</div>
-        <div class="workflow-adjustments"><div class="settings quick-settings"><label>Outline detail <output aria-hidden="true" data-val="detail">55</output><input aria-label="Outline detail" name="detail" type="range" min="10" max="100" value="55"></label></div></div>
+        <div class="workflow-adjustments"><div class="settings quick-settings"><label>Outline detail <output aria-hidden="true" data-val="detail">55</output><input aria-label="Outline detail" title="Always manual. Changing this keeps Auto settings enabled." name="detail" type="range" min="10" max="100" value="55"></label></div></div>
         <div class="settings amplify-controls"><button data-act="amplify" aria-pressed="false" title="Lift dark colors and retain their hue on the game palette; click again to turn off" disabled>Amplify colors</button><label class="amplify-strength" hidden>Strength <output aria-hidden="true" data-val="amplify">0</output><input aria-label="Color amplification" name="amplify" type="range" min="0" max="100" value="0"></label></div>
         <div class="auto-note" aria-live="polite">Choose settings from your image. Adjusting a setting switches to manual and keeps the suggestions.</div>
       </div>
@@ -111,7 +111,7 @@
       <details><summary>Local AI setup and timing</summary><p>Open Local AI setup to choose Chrome GPU, Chrome CPU, or the Python terminal service. Chrome modes include all three AI models and need no terminal or localhost access. The setup page shows model readiness, a speed test, and Python instructions when that engine is selected. Normal Browser line detection, Auto settings and Mark subject are local algorithms and work without loading AI.</p><p>Find or mark the subject, inspect the green selection, then Process image. Subject only omits the background. Subject first, background later completes the subject’s fills and outlines before optional simplified background strokes. Crop to subject is optional. Full image keeps the original large-region order. Fast merges more tiny color regions and removes more short lines; Balanced keeps more detail.</p><p>Bucket mode seals each color region, including holes, with the smallest brush before using the game’s Fill tool. Standard treatment adds black borders last within each subject layer. Light-lines treatment paints its base first and traces bright ink in white, without black borders or gray antialiasing regions. It suppresses faint grid lines; Outline detail controls how much weaker ink is kept. With AI selected, the model filters bright-ink components instead of adding dark edges. Small gaps joins only nearby line ends pointing toward each other.</p><p>The target is an estimate. Full-image standard fills receive two thirds of the budget and outlines one third. Subject-first planning reserves 80% for the subject; targets below 20 seconds omit background. During drawing, optional background stops starting when the target is exhausted. Light lines use the remaining budget after the required base. Processing and model time are separate. Measured speed updates the estimate without changing processed colors or paths. Full-image optional regions may be skipped to leave time for outlines.</p><p>Playback shows input order, not real-time game speed. Blue arrows indicate fills, blue circles bucket clicks, and red arrows outlines. Gray paths were skipped during execution.</p></details>
     </section>`;
     const $=s=>shadow.querySelector(s),button=act=>$(`[data-act="${act}"]`),canvas=$('canvas'),ctx=canvas.getContext('2d',{willReadFrequently:true}),auto=$('[name=auto]');
-    let image=null,source=null,crop=null,prepared=null,result=null,preview=null,uploadedThumbnail=null,view='final',cropMode=false,drag=null,controller=null,frame=null,playing=false,generation=0,drawing=false,stopping=null,skipped=[],autoSuggestion=null,subjectFocus='subject';
+    let image=null,source=null,crop=null,prepared=null,result=null,preview=null,uploadedThumbnail=null,view='final',cropMode=false,drag=null,controller=null,frame=null,playing=false,generation=0,drawing=false,stopping=null,skipped=[],autoSuggestion=null,autoController=null,subjectFocus='subject';
     let subjectImage=null,subjectSource='manual',subjectModelMs=0,subjectArea=0,subjectMode=false,subjectPoints=[],maskCache=null;
     let partsMode=false,partsIndex=null,partsSimilarity=null,partsSource=null,partsController=null,partsHover=-1,partsOverlay=null,partsFrame=null,partsDirty=false,selectionLayer=null,selectionHistory=[];
     const values=()=>E.settings(Object.fromEntries([...shadow.querySelectorAll('.settings [name]')].map(el=>[el.name,el.value])));
@@ -308,7 +308,7 @@
     }
     async function recommend(){
       if(!image||!auto.checked)return false;
-      invalidate();autoSuggestion=null;const id=generation,own=new AbortController();controller=own;controls();
+      invalidate();autoSuggestion=null;const id=generation,own=new AbortController();controller=own;autoController=own;controls();
       $('.auto-note').textContent='Choosing settings for this image…';status('Choosing image settings…');
       try{
         const pixels=prepared.getContext('2d',{willReadFrequently:true}).getImageData(0,0,800,600),mask=subjectPixels();
@@ -319,7 +319,7 @@
         autoSuggestion=suggestion;updateValues();$('.auto-note').textContent=suggestion.reason+' You can tweak any setting.';
         status('Auto settings ready. Click Process image.');return true;
       }catch(error){if(id===generation){$('.auto-note').textContent=error.name==='AbortError'?'Auto settings stopped.':error.message;status(error.name==='AbortError'?'Stopped.':error.message,error.name!=='AbortError');}return false;}
-      finally{if(id===generation){controller=null;controls();}}
+      finally{if(autoController===own)autoController=null;if(id===generation){controller=null;controls();}}
     }
     function summarize(){const p=result.plan,m=p.metrics;$('.stats').textContent=`Color target ${p.settings.colors} · ${p.sourceColors} simplified colors · ${m.colors} drawing colors\n${m.strokes} strokes · ${m.buckets} bucket clicks · ${m.moves} moves · ${m.colorChanges} color changes\nProcessing ${(p.processingMs/1000).toFixed(2)}s · line AI ${((p.modelMs||0)/1000).toFixed(2)}s · subject AI ${((p.subjectModelMs||0)/1000).toFixed(2)}s · drawing estimate ${((p.timing?.estimatedMs??m.estimatedMs)/1000).toFixed(1)}s\n${p.closedGaps} small line gaps closed. Budget omitted ${p.omitted.fills} fills and ${p.omitted.outlines} small outlines.${p.focus?'\nSubject first: '+p.focus.subjectOperations+' operations; optional background: '+p.focus.backgroundOperations+'.':''}`;}
     async function process(){
@@ -368,8 +368,15 @@
       writePreference(name,values()[name]).catch(error=>{if(!destroyed)status('Could not save drawer preferences: '+error.message,true);});
     }
     for(const el of shadow.querySelectorAll('.settings [name]'))el.addEventListener('input',()=>{
-      if(PREFERENCE_NAMES.includes(el.name))savePreference(el.name);
       if(partsMode)endParts();
+      if(el.name==='detail'){
+        updateValues();
+        // Detail never changes Auto mode or cancels an independent suggestion.
+        // Existing plans still need reprocessing with the new detail value.
+        if(autoController&&controller===autoController)return;
+        invalidate();return;
+      }
+      if(PREFERENCE_NAMES.includes(el.name))savePreference(el.name);
       const switchTreatment=$('[name=treatment]').value==='light-lines'&&Object.hasOwn(colorRegionSettings,el.name);
       if(switchTreatment)$('[name=treatment]').value='regions';
       auto.checked=false;

@@ -4,7 +4,7 @@ const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:
 (async()=>{
   const root=path.resolve(__dirname,'..'),output=path.join(root,'store/assets'),icons=path.join(root,'icons');
   await fs.mkdir(output,{recursive:true});await fs.mkdir(icons,{recursive:true});
-  const source=path.join(root,'skribbl_bot_extension_icon.png');
+  const source=path.join(root,'assets/branding/skribbl_bot_extension_icon.png');
   const icon=await sharp(source).resize(96,96).ensureAlpha().extend({top:16,bottom:16,left:16,right:16,background:{r:0,g:0,b:0,alpha:0}}).png().toBuffer();
   for(const size of [16,32,48,128])await sharp(icon).resize(size,size).png().toFile(path.join(icons,`icon${size}.png`));
   const promo=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="440" height="280"><rect width="440" height="280" fill="#101c35"/><circle cx="430" cy="0" r="190" fill="#1c3470"/><text x="28" y="166" fill="white" font-family="Arial,sans-serif" font-weight="700" font-size="27">Skribbl Auto Guesser</text><text x="28" y="204" fill="#c3d7fb" font-family="Arial,sans-serif" font-size="17">Find words. Preview images. Draw.</text><text x="28" y="244" fill="#94b9fb" font-family="Arial,sans-serif" font-size="15">Optional AI on your computer</text></svg>');

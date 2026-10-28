@@ -10,10 +10,10 @@ Use Node.js 20+ and Windows PowerShell. Clone the repository, then run:
 npm ci
 ```
 
-Download `skribbl-auto-guesser-2.3.3.zip` from [the matching GitHub release](https://github.com/chenhexu/skribbl-cheats-extension/releases/tag/v2.3.3). Restore models from that ZIP:
+Download `skribbl-auto-guesser-2.3.7.zip` from [the matching GitHub release](https://github.com/chenhexu/skribbl-cheats-extension/releases/tag/v2.3.7). Restore models from that ZIP:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\restore-browser-models.ps1 -Archive "C:\path\to\skribbl-auto-guesser-2.3.3.zip"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\restore-browser-models.ps1 -Archive "C:\path\to\skribbl-auto-guesser-2.3.7.zip"
 npm run build:ai
 ```
 
@@ -48,7 +48,7 @@ Install the Python dependencies/checkpoints using [the terminal setup guide](USA
 npm run build:ai
 ```
 
-The exporter reads local checkpoints, verifies ONNX graphs and records hashes, tokenizer files, licenses and public embeddings in `browser-ai/models/manifest.json`. It exports no query/custom-word cache. Updating a model requires reviewing its license, committing the new manifest/configuration, testing real CPU/GPU inference and distributing the corresponding binaries in a release ZIP.
+The exporter reads local checkpoints, verifies ONNX graphs and records hashes, tokenizer files, licenses and public embeddings in `browser-ai/models/model-index.json`. Its name deliberately differs from `manifest.json`: the Chrome Web Store package scanner must find only the extension manifest at the ZIP root. Packaging checks both the allowlist and final ZIP for that constraint. It exports no query/custom-word cache. Updating a model requires reviewing its license, committing the new index/configuration, testing real CPU/GPU inference and distributing the corresponding binaries in a release ZIP.
 
 ## Package
 
@@ -56,6 +56,12 @@ The exporter reads local checkpoints, verifies ONNX graphs and records hashes, t
 npm run package
 ```
 
-This rebuilds browser AI, checks model hashes, validates manifest references and JavaScript syntax, and writes `dist/skribbl-auto-guesser-2.3.3.zip` plus `.zip.json` metadata containing its SHA256, source commit and file list. The modified flag covers tracked source files; unrelated untracked local files are excluded. The explicit allowlist excludes tests, screenshots, Python, npm dependencies and submission documents. Model/runtime licenses and privacy/third-party notices are retained. Commit the intended source changes before the final package build so its metadata identifies a clean source revision.
+This rebuilds browser AI, checks model hashes, validates manifest references and JavaScript syntax, and writes `dist/skribbl-auto-guesser-2.3.7.zip` plus `.zip.json` metadata containing its SHA256, source commit and file list. The modified flag covers tracked source files; unrelated untracked local files are excluded. The explicit allowlist excludes tests, screenshots, Python, npm dependencies and submission documents. Model/runtime licenses and privacy/third-party notices are retained. Commit the intended source changes before the final package build so its metadata identifies a clean source revision.
 
 [Store submission checklist](../store/README.md) · [Permission evidence](STORE_PERMISSIONS_AUDIT.md) · [Browser AI architecture and verification](BROWSER_AI.md)
+
+## Project folders and listing screenshots
+
+See [Project layout](PROJECT_LAYOUT.md) for the runtime, branding, archive, test and store folders. The runtime entry points keep their existing paths. Source test images live in `tests/fixtures/`, so browser checks do not depend on loose files in the root.
+
+Run `node tools/prepare-user-screenshots.cjs` to rebuild the five listing screenshots and three alternatives from `store/references/`. The crop records include original SHA256 values. Run `powershell -NoProfile -ExecutionPolicy Bypass -File tools/package-store-kit.ps1` for the full submission kit and a separate five-image ZIP.

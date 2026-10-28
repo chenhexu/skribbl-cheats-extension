@@ -1,5 +1,30 @@
 # Release notes
 
+## 2.3.7
+
+- Rename the extension to Skribbl Auto Guesser + Auto Drawer and update the package summary to cover word search, automatic guesses, image drawing and optional local AI.
+- Refresh the store listing text, privacy justifications and submission kit; include five cropped user screenshots and three alternatives.
+- Add real drawing and related-search screenshots to the README, organize source branding, image fixtures and archived experiments, and preserve original loose captures/installers under an ignored local folder. Runtime entry-point paths remain unchanged.
+- Drawing behavior, permissions and model assets are unchanged from 2.3.6.
+
+## 2.3.6 — local preview
+
+- Attach the drawing debugger before any game input, then wait at least 400 ms and for 200 ms of stable canvas/viewport layout. The pause applies even when the canvas coordinates do not change; Chrome keeps its debugger notice visible.
+- Measure the canvas after startup settles. Stop promptly if the canvas or viewport moves during drawing, releasing held input before continuing to a bucket fill. Stop remains responsive during the startup pause.
+- Verify with trusted Chrome input: unchanged coordinates, delayed viewport resize and animated canvas layout, interrupted boundaries, startup cancellation, brush selection and executor regressions. These checks simulate the banner timing/layout; they do not automate the native Chrome infobar.
+- Includes the single-manifest Web Store package fix and independent Outline detail control. Permissions are unchanged.
+
+## 2.3.5 — local preview
+
+- Fix Chrome Web Store upload rejection caused by a second file named `manifest.json`. AI model provenance and hashes now use `browser-ai/models/model-index.json`; the root extension manifest keeps its required name.
+- Update model packaging, export/restore tools and notices. Validate exactly one root manifest in both the package allowlist and completed ZIP; regression checks reject nested or duplicate manifests.
+- Includes the independent Outline detail control from 2.3.4. Model weights and permissions are unchanged.
+
+## 2.3.4 — local preview
+
+- Outline detail is independent of Auto settings. Adjusting it keeps Auto enabled, preserves the other suggestions, and invalidates only the old drawing plan.
+- Changing detail while Auto is still choosing settings no longer cancels the suggestion. Compact-panel and large-viewer sessions retain the independent Auto/detail values.
+
 ## 2.3.3
 
 - Resize the floating Auto-Drawer from all four edges and four corners, including the top edge. Resizing preserves the opposite edge and uses the actual border-box size.

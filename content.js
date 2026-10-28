@@ -32,7 +32,7 @@
     const PANEL_SIZE = { minWidth: 260, minHeight: 200, maxWidth: 1400, maxHeight: 1200 };
     const DEV_PANEL_SIZE = { minWidth: 260, minHeight: 280, maxWidth: 1000, maxHeight: 1200 };
     const DRAWER_FLOAT_SIZE = { minWidth: 280, minHeight: 44, maxWidth: 1400, maxHeight: 1200 };
-    const SCRIPT_VERSION = 'v2.3.3';
+    const SCRIPT_VERSION = 'v2.3.7 local preview';
   
     const LIMITS = {
       delayMin: 0,
