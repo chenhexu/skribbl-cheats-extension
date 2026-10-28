@@ -2,7 +2,7 @@
 
 Hint-aware word suggestions and an image Auto-Drawer for **skribbl.io**. Search by spelling or meaning, preview an uploaded image, and choose when to send guesses or start drawing. Optional AI runs on your own computer.
 
-**Version 2.3.0** · Chrome 116+ · No paid AI subscription or API key required.
+**Version 2.3.3** · Chrome 116+ · No paid AI subscription or API key required.
 
 [How to use](docs/USAGE.md) · [AI setup](docs/USAGE.md#choose-an-ai-engine) · [Privacy](PRIVACY.md) · [Report a problem](https://github.com/chenhexu/skribbl-cheats-extension/issues)
 
@@ -10,7 +10,7 @@ Hint-aware word suggestions and an image Auto-Drawer for **skribbl.io**. Search 
 
 ## Install
 
-1. Download `skribbl-auto-guesser-2.3.0.zip` from [GitHub Releases](https://github.com/chenhexu/skribbl-cheats-extension/releases).
+1. Download `skribbl-auto-guesser-2.3.3.zip` from [GitHub Releases](https://github.com/chenhexu/skribbl-cheats-extension/releases).
 2. Extract it into a permanent folder. The ZIP contains the extension and its AI models; you do not need Python or npm to use it.
 3. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and select the extracted folder containing `manifest.json`.
 4. Open or refresh [skribbl.io](https://skribbl.io/). The helper panel appears on that site. Disable any older installed copy to avoid duplicate panels.
@@ -59,10 +59,10 @@ See the [usage guide](docs/USAGE.md) for subject corrections, terminal setup and
 
 Chrome AI uses packaged models on your device. No hosted inference provider, analytics collector or API token is used. Guesses and drawing input go to Skribbl; optional public word-list downloads contact GitHub/jsDelivr. Python mode contacts only your local service after permission is granted. See the [privacy policy](PRIVACY.md) for storage and network details.
 
-`storage` remembers shared preferences and the AI engine. `offscreen` hosts the Chrome AI worker. `debugger` performs user-started game drawing. Site scripts run only on `https://skribbl.io/*`; optional Python access is limited to `http://127.0.0.1:8765/*`.
+Only `storage` and `debugger` are required: they remember shared preferences and perform user-started game drawing. `offscreen` is optional and requested when enabling Chrome AI. Site scripts run only on `https://skribbl.io/*`; optional Python access is limited to `http://127.0.0.1:8765/*`. See the [permission audit](docs/STORE_PERMISSIONS_AUDIT.md) for the API uses and checks.
 
 ## Development and publishing
 
-[Development and builds](docs/DEVELOPMENT.md) · [2.3.0 release notes](CHANGELOG.md) · [Chrome Web Store submission kit](store/README.md) · [Permission justifications](STORE_PRIVACY_FIELDS.md) · [Validation notes](docs/BROWSER_AI.md)
+[Development and builds](docs/DEVELOPMENT.md) · [2.3.3 release notes](CHANGELOG.md) · [Chrome Web Store submission kit](store/README.md) · [Permission justifications](STORE_PRIVACY_FIELDS.md) · [Validation notes](docs/BROWSER_AI.md)
 
 Project code is [MIT licensed](LICENSE). Bundled models and third-party runtime components retain their own licenses; see [third-party notices](THIRD_PARTY_NOTICES.md). This project is independently developed and is not affiliated with Skribbl or Google.

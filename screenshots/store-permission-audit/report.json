@@ -1,23 +1,24 @@
 {
-  "version": "2.3.0",
+  "version": "2.3.3",
   "requiredPermissions": [
     "debugger",
-    "storage",
+    "storage"
+  ],
+  "optionalPermissions": [
     "offscreen"
   ],
   "optionalOrigins": [
     "http://127.0.0.1:8765/*"
   ],
   "browser": "C:\\Users\\chenh_u0xevwh\\AppData\\Local\\ms-playwright\\chromium-1234\\chrome-win64\\chrome.exe",
-  "extensionId": "lganljnlhppmcegjgfifndhpnemcaihj",
+  "extensionId": "jkgfgfehmfkngnlkokidieehhminoncc",
   "grantedPermissions": {
     "origins": [
       "https://skribbl.io/*"
     ],
     "permissions": [
       "debugger",
-      "storage",
-      "offscreen"
+      "storage"
     ]
   },
   "actualChromeStorage": {

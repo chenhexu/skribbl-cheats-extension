@@ -1,4 +1,4 @@
-# In-Chrome AI and setup — 2.3.0
+# In-Chrome AI and setup — 2.3.3
 
 ## User flow
 
@@ -9,7 +9,9 @@ Chrome engines need no terminal, localhost grant, API key, runtime model downloa
 ## Implementation
 
 - ONNX Runtime Web 1.22.0 and the Transformers.js 3.8.1 tokenizer are bundled as local JavaScript/WASM. Remote model loading is disabled. CPU uses single-threaded SIMD WASM without cross-origin isolation; GPU uses WebGPU. Backend choice is explicit, without silently switching to the Python service or requesting its permission.
-- The background creates one packaged offscreen document with the WORKERS reason. It hosts a dedicated worker so inference does not run on the game's UI thread. Creation is coalesced; changing engines aborts outstanding requests, closes the old document and persists the choice. Requests wait for a configuration change to finish. Cancellation discards late results and yields between custom-word batches.
+- The background creates one packaged offscreen document with the WORKERS reason after optional Offscreen access is granted from AI setup. It hosts a dedicated worker so inference does not run on the game's UI thread. Creation is coalesced; changing engines aborts outstanding requests, closes the old document and persists the choice. Requests wait for a configuration change to finish. Cancellation discards late results and yields between custom-word batches.
+- During a bounded AI request, the background calls a lightweight extension API every 20 seconds to prevent idle suspension while it awaits inference. Timers stop on completion, failure or cancellation; this follows Chrome's guidance for [long-running service-worker work](https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers#keep_a_service_worker_alive). Closed offscreen message channels retry once; fatal worker errors drain pending replies and allow the next attempt to create a new worker.
+- Word-search content messaging also retries a lost background response channel once, with a new request ID and cancellation of the abandoned request. Abort settles immediately, late results remain ignored, and unanswered channels have a 35-second client deadline per attempt. Genuine configuration/model failures are not retried or silently redirected to another backend.
 - MiniLM uses the same pinned model revision as Python, 64-token truncation, masked mean pooling and normalized cosine similarity. The 3,708 public dictionary vectors are exported from the existing public-only cache. Queries/custom vectors stay in bounded memory caches. Every returned word still comes from the submitted hint-eligible bank.
 - U2NETP uses 320px ImageNet normalization and the source alpha mask. Line AI uses a 256px white-padded aspect-preserving transform and reverses that transform on output. Pixel resizing differs slightly between Canvas and Pillow. Browser CPU/GPU outputs were compared with Python outputs on a representative fixture.
 - At fixed 320px input, all subject-model MaxPool inputs have even spatial dimensions. Export verifies this before replacing unsupported WebGPU ceil-mode pooling with the mathematically identical floor mode. Trained weights are unchanged. Models are loaded and run once before setup reports Ready, catching unsupported operators during warm-up.
@@ -17,9 +19,9 @@ Chrome engines need no terminal, localhost grant, API key, runtime model downloa
 
 ## Verification
 
-`npm test` covers broker defaults/validation, single-document creation under concurrent requests, cancellation before/after creation, late-result rejection and existing guess/drawing behavior.
+`npm test` covers broker defaults/validation, single-document creation under concurrent requests, cancellation before/after creation, late-result rejection, bounded connection retries, crashed-worker recreation, pending-work keep-alive cleanup and existing guess/drawing behavior.
 
-`npm run test:browser-ai` uses isolated real Chromium extension profiles with a synthetic Skribbl page. It verifies learned music → guitar suggestions through the actual content script, strict hint-length filtering, real subject/line model calls from the viewer, setup/image session transfer, worker closure on switching to Python, persistence after a full browser restart, and zero external inference/network requests in the controlled fixture. It seeds the bundled dictionary so the unrelated legacy public-list download behavior is excluded.
+`npm run test:browser-ai` uses isolated real Chromium extension profiles with a synthetic Skribbl page. It verifies learned music → guitar suggestions through the actual content script, strict hint-length filtering, real subject/line model calls from the viewer, setup/image session transfer, worker closure on switching to Python, persistence after a full browser restart, and zero external inference/network requests in the controlled fixture. It also closes the actual offscreen document during a cold search and stops the background service worker during another pending search; both current queries must finish automatically without retyping. It seeds the bundled dictionary so the unrelated legacy public-list download behavior is excluded.
 
 `node tools/smoke-browser-ai.cjs` and `node tools/smoke-browser-ai.cjs --gpu` exercise both engines with real model inference and save reports/screenshots under screenshots/browser-ai. On the test computer, warmed word searches took roughly 15–20 ms including extension messaging. A warmed GPU image test took about 0.2 seconds per model versus around 2 seconds for browser CPU. Cold model loading/compilation takes several seconds. These measurements are fixture/device-specific, not universal promises.
 

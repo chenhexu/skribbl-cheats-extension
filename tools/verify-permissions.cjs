@@ -33,7 +33,8 @@ async function values(page){return page.evaluate(()=>{const s=studio.getSession(
 (async()=>{
   assert(extension,'Usage: node tools/verify-permissions.cjs <extracted-extension-directory>');
   const manifest=JSON.parse(await fs.readFile(path.join(extension,'manifest.json'),'utf8'));
-  assert.deepEqual([...manifest.permissions].sort(),['debugger','offscreen','storage']);
+  assert.deepEqual([...manifest.permissions].sort(),['debugger','storage']);
+  assert.deepEqual(manifest.optional_permissions,['offscreen']);
   assert.deepEqual(manifest.optional_host_permissions,['http://127.0.0.1:8765/*']);
   assert(manifest.content_scripts.every(entry=>entry.matches.length===1 && entry.matches[0]==='https://skribbl.io/*'));
   await fs.mkdir(output,{recursive:true});
@@ -43,11 +44,13 @@ async function values(page){return page.evaluate(()=>{const s=studio.getSession(
   assert(relative.startsWith('..')||path.isAbsolute(relative),'Use an extracted ZIP directory, not a directory containing the test profiles.');
   const profile=path.join(scratch,'positive-profile');
   let current;
-  const report={version:manifest.version,requiredPermissions:manifest.permissions,optionalOrigins:manifest.optional_host_permissions,browser:await binary()};
+  const report={version:manifest.version,requiredPermissions:manifest.permissions,optionalPermissions:manifest.optional_permissions,optionalOrigins:manifest.optional_host_permissions,browser:await binary()};
   try{
     current=await launch(extension,profile);
     report.extensionId=current.id;
     report.grantedPermissions=await current.worker.evaluate(()=>chrome.permissions.getAll());
+    assert.equal(await current.worker.evaluate(()=>chrome.permissions.contains({permissions:['offscreen']})),false);
+    assert.equal(await current.worker.evaluate(()=>chrome.permissions.contains({origins:['http://127.0.0.1:8765/*']})),false);
     assert.equal(await current.worker.evaluate(()=>chrome.permissions.contains({permissions:['storage']})),true);
     await current.page.getByLabel('Upload image',{exact:true}).setInputFiles({name:'permission-test.svg',mimeType:'image/svg+xml',buffer:Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="white"/><circle cx="400" cy="300" r="150" fill="red"/></svg>')});
     await expect(current.page.getByRole('button',{name:'Process image',exact:true})).toBeEnabled();

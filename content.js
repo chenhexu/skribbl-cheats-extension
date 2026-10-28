@@ -31,8 +31,8 @@
 
     const PANEL_SIZE = { minWidth: 260, minHeight: 200, maxWidth: 1400, maxHeight: 1200 };
     const DEV_PANEL_SIZE = { minWidth: 260, minHeight: 280, maxWidth: 1000, maxHeight: 1200 };
-    const DRAWER_FLOAT_SIZE = { minWidth: 280, minHeight: 44, maxWidth: 520, maxHeight: 1200 };
-    const SCRIPT_VERSION = 'v2.3.0';
+    const DRAWER_FLOAT_SIZE = { minWidth: 280, minHeight: 44, maxWidth: 1400, maxHeight: 1200 };
+    const SCRIPT_VERSION = 'v2.3.3';
   
     const LIMITS = {
       delayMin: 0,
@@ -5271,15 +5271,7 @@
         const response = await fetch(health?'/health':'/api/word-search', {...(health?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}),signal:AbortSignal.any([signal,AbortSignal.timeout(30000)])});
         const body = await response.json();if(!response.ok)throw new Error(body.error || 'Local service failed ('+response.status+')');return health?{health:body}:body;
       }
-      const id = crypto.randomUUID();
-      const cancel = () => { try { chrome.runtime.sendMessage({action:'aiCancel',id}).catch(()=>{}); } catch (_) {} };
-      signal.addEventListener('abort',cancel,{once:true});
-      try {
-        const response = await chrome.runtime.sendMessage({action,id,...data});
-        if(!response?.ok)throw new Error(response?.error || 'Local service did not respond');return response;
-      } catch(error) {
-        if(/extension context invalidated/i.test(error.message))throw new Error('Refresh the Skribbl tab to reconnect the extension.');throw error;
-      } finally { signal.removeEventListener('abort',cancel); }
+      return SAGWordSearch.runtimeRequest(chrome.runtime,action,data,signal);
     }
     const requestWordSearch=(query,candidates,signal)=>requestSearchService('aiWordSearch',{query,candidates},signal);
     const wordSearch = globalThis.SAGWordSearch ? new SAGWordSearch.Controller({request:requestWordSearch,onUpdate:()=>renderTopCandidates()}) : null;
@@ -5675,36 +5667,35 @@
         if (!resizing) return;
         const dx = e.clientX - startX;
         const dy = e.clientY - startY;
-        const maxH = Math.min(sizeLimits.maxHeight || 1200, window.innerHeight * 0.95);
-        const minW = sizeLimits.minWidth;
-        const maxW = sizeLimits.maxWidth || 9999;
-        const minH = sizeLimits.minHeight;
+        const maxH = Math.min(sizeLimits.maxHeight || 1200, window.innerHeight);
+        const maxW = Math.min(sizeLimits.maxWidth || 9999, window.innerWidth);
+        const minW = Math.min(sizeLimits.minWidth, maxW);
+        const minH = Math.min(sizeLimits.minHeight, maxH);
 
         let w = startW, h = startH, left = startLeft, top = startTop;
 
         // East / West
         if (dir === 'e' || dir === 'se' || dir === 'ne') {
-          w = Math.max(minW, Math.min(maxW, startW + dx));
+          w = Math.max(minW, Math.min(maxW, window.innerWidth - startLeft, startW + dx));
         }
         if (dir === 'w' || dir === 'sw' || dir === 'nw') {
-          w = Math.max(minW, Math.min(maxW, startW - dx));
+          w = Math.max(minW, Math.min(maxW, startLeft + startW, startW - dx));
           // Move left edge; clamp so panel stays on screen
           left = startLeft + (startW - w);
         }
 
         // South / North
         if (dir === 's' || dir === 'se' || dir === 'sw') {
-          h = Math.max(minH, Math.min(maxH, startH + dy));
+          h = Math.max(minH, Math.min(maxH, window.innerHeight - startTop, startH + dy));
         }
         if (dir === 'n' || dir === 'ne' || dir === 'nw') {
-          h = Math.max(minH, Math.min(maxH, startH - dy));
+          h = Math.max(minH, Math.min(maxH, startTop + startH, startH - dy));
           top = startTop + (startH - h);
         }
 
         // Clamp position so panel stays inside viewport (like main and dev panels)
-        const margin = 8;
-        const maxLeft = Math.max(0, window.innerWidth - w - margin);
-        const maxTop = Math.max(0, window.innerHeight - h - margin);
+        const maxLeft = Math.max(0, window.innerWidth - w);
+        const maxTop = Math.max(0, window.innerHeight - h);
         left = Math.max(0, Math.min(left, maxLeft));
         top = Math.max(0, Math.min(top, maxTop));
 
@@ -5725,9 +5716,8 @@
         settings[heightKey] = panel.offsetHeight;
         // Save position in case a north/west drag moved the panel (already clamped in onMove)
         const rect = panel.getBoundingClientRect();
-        const margin = 8;
-        const maxLeft = Math.max(0, window.innerWidth - rect.width - margin);
-        const maxTop = Math.max(0, window.innerHeight - rect.height - margin);
+        const maxLeft = Math.max(0, window.innerWidth - rect.width);
+        const maxTop = Math.max(0, window.innerHeight - rect.height);
         settings[xKey] = Math.max(0, Math.min(rect.left, maxLeft));
         settings[yKey] = Math.max(0, Math.min(rect.top, maxTop));
         saveSettings();
@@ -5740,20 +5730,20 @@
       }
     }
 
-    function ensurePanelVisible(panel) {
+    function ensurePanelVisible(panel, { xKey = 'panelX', yKey = 'panelY' } = {}) {
       const panelWidth = panel.offsetWidth || 320;
       const panelHeight = panel.offsetHeight || 400;
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
       
-      let x = settings.panelX != null ? settings.panelX : 0;
-      let y = settings.panelY != null ? settings.panelY : 0;
+      let x = settings[xKey] != null ? settings[xKey] : panel.getBoundingClientRect().left;
+      let y = settings[yKey] != null ? settings[yKey] : panel.getBoundingClientRect().top;
       
       if (x + panelWidth > viewportWidth) {
-        x = Math.max(0, viewportWidth - panelWidth - 10);
+        x = Math.max(0, viewportWidth - panelWidth);
       }
       if (y + panelHeight > viewportHeight) {
-        y = Math.max(0, viewportHeight - panelHeight - 10);
+        y = Math.max(0, viewportHeight - panelHeight);
       }
       if (x < 0) x = 0;
       if (y < 0) y = 0;
@@ -5761,8 +5751,8 @@
       panel.style.left = `${x}px`;
       panel.style.top = `${y}px`;
       panel.style.right = 'auto';
-      settings.panelX = x;
-      settings.panelY = y;
+      settings[xKey] = x;
+      settings[yKey] = y;
       saveSettings();
     }
   
@@ -5786,8 +5776,9 @@
         'color:#1f2937',
         'font:12px/1.35 Arial,sans-serif',
         `width:${w}px`,
-        'min-width:' + PANEL_SIZE.minWidth + 'px',
-        'max-height:90vh',
+        'min-width:min(' + PANEL_SIZE.minWidth + 'px,100vw)',
+        'max-width:min(' + PANEL_SIZE.maxWidth + 'px,100vw)',
+        'max-height:min(1200px,100vh)',
         'overflow:hidden',
         'padding:8px',
         'box-sizing:border-box',
@@ -6955,7 +6946,7 @@
               if (open) {
                 // Expanding: restore saved expanded height (or default)
                 const defaultH = 480, minContentH = 320;
-                const maxH = Math.min(DRAWER_FLOAT_SIZE.maxHeight, Math.floor(window.innerHeight * 0.85));
+                const maxH = Math.min(DRAWER_FLOAT_SIZE.maxHeight, window.innerHeight);
                 const h = Math.max(minContentH, Math.min(maxH, settings.drawerFloatHeight && settings.drawerFloatHeight >= minContentH ? settings.drawerFloatHeight : defaultH));
                 wrap.style.height = h + 'px';
               } else {
@@ -7013,22 +7004,22 @@
           if (floatContainer) return floatContainer;
           const wrap = document.createElement('div');
           wrap.id = 'sag-drawer-float';
-          const maxH = Math.min(DRAWER_FLOAT_SIZE.maxHeight, Math.floor(window.innerHeight * 0.85));
+          const maxH = Math.min(DRAWER_FLOAT_SIZE.maxHeight, window.innerHeight);
           const w = Math.max(DRAWER_FLOAT_SIZE.minWidth, Math.min(DRAWER_FLOAT_SIZE.maxWidth, settings.drawerFloatWidth || 320));
           const savedH = settings.drawerFloatHeight;
           const h = Math.max(DRAWER_FLOAT_MIN_CONTENT_HEIGHT, Math.min(maxH, savedH && savedH >= DRAWER_FLOAT_MIN_CONTENT_HEIGHT ? savedH : DRAWER_FLOAT_DEFAULT_HEIGHT));
-          wrap.style.cssText = 'position:fixed;z-index:2147483647;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.12);overflow:hidden;background:#fff;display:flex;flex-direction:column;';
+          wrap.style.cssText = 'position:fixed;z-index:2147483647;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.12);overflow:hidden;background:#fff;display:flex;flex-direction:column;box-sizing:border-box;';
           wrap.style.width = w + 'px';
           wrap.style.height = h + 'px';
-          wrap.style.minWidth = DRAWER_FLOAT_SIZE.minWidth + 'px';
-          wrap.style.maxWidth = DRAWER_FLOAT_SIZE.maxWidth + 'px';
+          wrap.style.minWidth = 'min(' + DRAWER_FLOAT_SIZE.minWidth + 'px,100vw)';
+          wrap.style.maxWidth = 'min(' + DRAWER_FLOAT_SIZE.maxWidth + 'px,100vw)';
           wrap.style.minHeight = DRAWER_FLOAT_SIZE.minHeight + 'px';
-          wrap.style.maxHeight = maxH + 'px';
+          wrap.style.maxHeight = 'min(1200px,100vh)';
           const body = document.createElement('div');
           body.className = 'sag-drawer-float-body';
           body.style.cssText = 'overflow:hidden;min-height:0;flex:1;display:flex;flex-direction:column;';
           wrap.appendChild(body);
-          // Resize edges: sides + bottom + corners only. Full top = draggable (like main + dev panels).
+          // All edges and corners resize; the header below the top edge drags.
           const edge = (id, style) => {
             const d = document.createElement('div');
             d.id = id;
@@ -7036,6 +7027,7 @@
             d.style.cssText = style;
             return d;
           };
+          wrap.appendChild(edge('sag-float-resize-n',  'position:absolute;top:0;left:8px;right:8px;height:6px;cursor:ns-resize;z-index:10;'));
           wrap.appendChild(edge('sag-float-resize-s',  'position:absolute;bottom:0;left:8px;right:8px;height:6px;cursor:ns-resize;z-index:10;'));
           wrap.appendChild(edge('sag-float-resize-e',  'position:absolute;top:8px;right:0;bottom:8px;width:6px;cursor:ew-resize;z-index:10;'));
           wrap.appendChild(edge('sag-float-resize-w',  'position:absolute;top:8px;left:0;bottom:8px;width:6px;cursor:ew-resize;z-index:10;'));
@@ -7044,6 +7036,7 @@
           wrap.appendChild(edge('sag-float-resize-sw', 'position:absolute;bottom:0;left:0;width:12px;height:12px;cursor:nesw-resize;z-index:11;'));
           wrap.appendChild(edge('sag-float-resize-se', 'position:absolute;bottom:0;right:0;width:12px;height:12px;cursor:nwse-resize;z-index:11;'));
           makeResizable(wrap, [
+            { el: wrap.querySelector('#sag-float-resize-n'),  dir: 'n' },
             { el: wrap.querySelector('#sag-float-resize-s'),  dir: 's' },
             { el: wrap.querySelector('#sag-float-resize-e'),  dir: 'e' },
             { el: wrap.querySelector('#sag-float-resize-w'),  dir: 'w' },
@@ -7111,9 +7104,8 @@
           const dx = e.clientX - dragStartX, dy = e.clientY - dragStartY;
           const w = floatContainer.el.offsetWidth;
           const h = floatContainer.el.offsetHeight;
-          const margin = 8;
-          const maxLeft = Math.max(0, window.innerWidth - w - margin);
-          const maxTop = Math.max(0, window.innerHeight - h - margin);
+          const maxLeft = Math.max(0, window.innerWidth - w);
+          const maxTop = Math.max(0, window.innerHeight - h);
           let left = Math.max(0, Math.min(floatStartX + dx, maxLeft));
           let top = Math.max(0, Math.min(floatStartY + dy, maxTop));
           floatContainer.el.style.left = left + 'px';
@@ -7126,9 +7118,8 @@
           if (floatContainer) floatContainer.el.style.cursor = '';
           if (isFloating && floatContainer && floatContainer.el.parentElement) {
             const r = floatContainer.el.getBoundingClientRect();
-            const margin = 8;
-            const maxLeft = Math.max(0, window.innerWidth - r.width - margin);
-            const maxTop = Math.max(0, window.innerHeight - r.height - margin);
+            const maxLeft = Math.max(0, window.innerWidth - r.width);
+            const maxTop = Math.max(0, window.innerHeight - r.height);
             settings.drawerFloatX = Math.max(0, Math.min(r.left, maxLeft));
             settings.drawerFloatY = Math.max(0, Math.min(r.top, maxTop));
             saveSettings();
@@ -7147,7 +7138,7 @@
           const fc = createFloatContainer();
           // A drawer dragged out of the dock always opens. A reused float may
           // still have its collapsed height, so restore its content area too.
-          const maxH = Math.min(DRAWER_FLOAT_SIZE.maxHeight, Math.floor(window.innerHeight * 0.85));
+          const maxH = Math.min(DRAWER_FLOAT_SIZE.maxHeight, window.innerHeight);
           const savedH = settings.drawerFloatHeight;
           fc.el.style.height = Math.max(DRAWER_FLOAT_MIN_CONTENT_HEIGHT, Math.min(maxH, savedH && savedH >= DRAWER_FLOAT_MIN_CONTENT_HEIGHT ? savedH : DRAWER_FLOAT_DEFAULT_HEIGHT)) + 'px';
           const panelRect = getPanelRect();
@@ -7156,15 +7147,15 @@
           // Always use drop position so the window goes where the user released the mouse
           let left = clientX - 20;
           let top = clientY - 10;
-          left = Math.max(8, Math.min(left, window.innerWidth - fw - 8));
-          top = Math.max(8, Math.min(top, window.innerHeight - fh - 8));
+          left = Math.max(0, Math.min(left, window.innerWidth - fw));
+          top = Math.max(0, Math.min(top, window.innerHeight - fh));
           // Only if that would sit on top of the main panel, nudge to the left of the panel
           const margin = 16;
           const overlapX = left < panelRect.right + margin && left + fw > panelRect.left - margin;
           const overlapY = top < panelRect.bottom + margin && top + fh > panelRect.top - margin;
           if (overlapX && overlapY) {
-            left = Math.max(8, panelRect.left - fw - margin);
-            top = Math.max(8, Math.min(panelRect.top, window.innerHeight - fh - 8));
+            left = Math.max(0, panelRect.left - fw - margin);
+            top = Math.max(0, Math.min(panelRect.top, window.innerHeight - fh));
           }
           fc.el.style.left = left + 'px';
           fc.el.style.top = top + 'px';
@@ -7182,6 +7173,7 @@
           placeholderEl.querySelector('button').addEventListener('click', dock);
           drawerSlot.appendChild(placeholderEl);
           isFloating = true;
+          settings.drawerFloatX = left;settings.drawerFloatY = top;saveSettings();
         }
 
         function dock() {
@@ -7293,6 +7285,10 @@
         }
 
         const blockHeader = panel.querySelector('.sag-drawer-block-header');
+        window.addEventListener('resize', () => {
+          ensurePanelVisible(panel);
+          if (isFloating && floatContainer?.el.isConnected) ensurePanelVisible(floatContainer.el, { xKey:'drawerFloatX', yKey:'drawerFloatY' });
+        });
         if (blockHeader) {
           blockHeader.addEventListener('mousedown', (e) => {
             if (e.target === drawerCollapse || e.target.closest('.sag-drawer-dock-back')) return;

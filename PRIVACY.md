@@ -1,6 +1,6 @@
 # Privacy Policy — Skribbl Auto Guesser
 
-**Last updated:** October 27, 2026
+**Last updated:** October 28, 2026
 
 **Chrome Web Store:** For the Privacy form fields (single purpose, permission justifications, remote code), use the copy-paste text in [STORE_PRIVACY_FIELDS.md](STORE_PRIVACY_FIELDS.md).
 
@@ -39,7 +39,7 @@ The existing dictionary cache also records the extension version last merged and
 
 - **Host access (skribbl.io):** Used only to read the game hint and guess input on skribbl.io so the extension can suggest words and send guesses. It does not run on other sites.
 - **Storage:** Stores the selected AI engine, Auto-Drawer preferences and local drawing-command latency measurements. Legacy preferences/cache still use the site's localStorage.
-- **Offscreen:** Hosts a packaged dedicated worker for Chrome AI so models can stay available while playing without a permanent extra visible tab. It is released when unloaded, changing engines, or closing the browser.
+- **Optional Offscreen:** Requested when you choose a Chrome AI engine or click Load AI models. Hosts a packaged dedicated worker for Chrome AI so models can stay available while playing without a permanent extra visible tab. It is released when unloaded, changing engines, or closing the browser.
 - **Debugger:** Used only for the optional Auto-Drawer feature when drawing via Chrome DevTools Protocol (CDP). The extension attaches to the page to simulate mouse input on the game canvas. No data is sent elsewhere; the debugger is used only on the skribbl.io tab you are using.
 - **Optional loopback host access:** Allows contact with the local AI service only through `http://127.0.0.1:8765/*`. Both the requested permission and implementation restrict the port to 8765.
 

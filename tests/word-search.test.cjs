@@ -2,6 +2,26 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const S=require('../word-search');
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+
+test('word search reconnects a closed background channel once with a fresh cancellable request',async()=>{
+  const calls=[],failure='A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received';let attempts=0;
+  const runtime={sendMessage:async msg=>{calls.push(msg);if(msg.action==='aiCancel')return {ok:true};if(++attempts===1)throw Error(failure);return {ok:true,matches:[{word:'guitar',score:.8}]};}};
+  const response=await S.runtimeRequest(runtime,'aiWordSearch',{query:'music',candidates:['guitar']},new AbortController().signal);
+  assert.equal(response.matches[0].word,'guitar');const searches=calls.filter(msg=>msg.action==='aiWordSearch');
+  assert.equal(searches.length,2);assert.notEqual(searches[0].id,searches[1].id);assert.deepEqual(searches.map(msg=>msg.candidates),[['guitar'],['guitar']]);
+  assert.ok(calls.some(msg=>msg.action==='aiCancel'&&msg.id===searches[0].id));
+  attempts=0;runtime.sendMessage=async msg=>{if(msg.action==='aiCancel')return {ok:true};attempts++;throw Error(failure);};
+  await assert.rejects(S.runtimeRequest(runtime,'aiWordSearch',{query:'music',candidates:['guitar']},new AbortController().signal),{code:'AI_CONNECTION_LOST'});assert.equal(attempts,2);
+});
+
+test('unanswered AI channels settle on cancellation or timeout; configuration errors are not retried',async()=>{
+  const calls=[],runtime={sendMessage:msg=>{calls.push(msg);return msg.action==='aiCancel'?Promise.resolve({ok:true}):new Promise(()=>{});}},controller=new AbortController();
+  const pending=S.runtimeRequest(runtime,'aiWordSearch',{query:'food',candidates:['bread']},controller.signal);controller.abort();
+  await assert.rejects(pending,{name:'AbortError'});assert.equal(calls.at(-1).action,'aiCancel');
+  await assert.rejects(S.runtimeRequest(runtime,'aiWordSearch',{},new AbortController().signal,{timeout:5}),/timed out/);
+  let attempts=0;runtime.sendMessage=async()=>{attempts++;return {ok:false,error:'Choose an AI engine in setup'};};
+  await assert.rejects(S.runtimeRequest(runtime,'aiWordSearch',{},new AbortController().signal),/Choose an AI engine/);assert.equal(attempts,1);
+});
 test('related search combines spelling, plurals and ocean relationships without adding words',()=>{
   const bank=['fish','fishes','dolphin','shark','chair','jellyfish','fishbowl'];
   const matches=S.rank('fish',bank,{related:true});

@@ -8,11 +8,13 @@ function fixture({searchTimeoutMs}={}){
   const chrome={runtime:{id:'fixture',onMessage:{addListener:fn=>hooks.message=fn},onConnect:{addListener:fn=>hooks.connect=fn},getURL:p=>'chrome-extension://fixture/'+p},
     permissions:{contains:async request=>{assert.deepEqual(Array.from(request.origins),['http://127.0.0.1:8765/*']);return allowed;}},tabs:{onRemoved:{addListener:fn=>hooks.remove=fn},create:async()=>{}},
     debugger:{attach:(_t,_v,cb)=>cb(),detach:(_t,cb)=>cb(),onDetach:{addListener:fn=>hooks.detach=fn},sendCommand:(_t,_m,p,cb)=>{events.push(p);if(p.type==='mouseMoved'&&p.buttons===1&&events.length>5)disconnected?.();queueMicrotask(()=>cb({}));}}};
-  const context={chrome,SAGPlanTransport:Transport,SAGBrowserAIBridge:require('../browser-ai/bridge'),importScripts:()=>{},Map,Uint8Array,AbortController,crypto:require('node:crypto').webcrypto,setTimeout:(fn,ms)=>setTimeout(fn,ms===30000?(searchTimeoutMs??ms):ms),clearTimeout,btoa,fetch:async (url,options)=>{fetchURL=url;fetchOptions=options;if(fetchHandler)return fetchHandler(url,options);return {ok:true,json:async()=>({ready:true,device:'cpu'}),arrayBuffer:async()=>new Uint8Array([1,2,3]).buffer};}};
+  const intervals=new Map();let nextInterval=0,heartbeats=0;
+  chrome.runtime.getPlatformInfo=async()=>{heartbeats++;return {os:'win'};};
+  const context={chrome,SAGPlanTransport:Transport,SAGBrowserAIBridge:require('../browser-ai/bridge'),importScripts:()=>{},Map,Uint8Array,AbortController,crypto:require('node:crypto').webcrypto,setInterval:(fn,ms)=>{assert.equal(ms,20000);intervals.set(++nextInterval,fn);return nextInterval;},clearInterval:id=>intervals.delete(id),setTimeout:(fn,ms)=>setTimeout(fn,ms===30000?(searchTimeoutMs??ms):ms),clearTimeout,btoa,fetch:async (url,options)=>{fetchURL=url;fetchOptions=options;if(fetchHandler)return fetchHandler(url,options);return {ok:true,json:async()=>({ready:true,device:'cpu'}),arrayBuffer:async()=>new Uint8Array([1,2,3]).buffer};}};
   vm.runInNewContext(fs.readFileSync('background.js','utf8'),context);
   const sender={id:'fixture',tab:{id:1,url:'https://skribbl.io/'},url:'https://skribbl.io/',frameId:0};
   function message(msg,who=sender){return new Promise(resolve=>{const async=hooks.message(msg,who,resolve);if(!async)resolve(undefined);});}
-  return {chrome,hooks,events,message,sender,allow:()=>allowed=true,url:()=>fetchURL,options:()=>fetchOptions,fetch:fn=>fetchHandler=fn,port:runId=>hooks.connect({name:'planKeepAlive:'+runId,sender,onDisconnect:{addListener:fn=>disconnected=fn}})};
+  return {chrome,hooks,events,message,sender,intervals,heartbeats:()=>heartbeats,allow:()=>allowed=true,url:()=>fetchURL,options:()=>fetchOptions,fetch:fn=>fetchHandler=fn,port:runId=>hooks.connect({name:'planKeepAlive:'+runId,sender,onDisconnect:{addListener:fn=>disconnected=fn}})};
 }
 test('page unload port disconnection cancels a background curve and releases input',async()=>{
   const f=fixture();assert.equal((await f.message({action:'planBegin',runId:'one'})).ok,true);f.port('one');
@@ -52,4 +54,16 @@ test('a stalled semantic search times out and reports failure instead of hanging
   f.fetch(async(_url,{signal})=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true})));
   const response=await f.message({action:'aiWordSearch',id:'stalled',query:'fish',candidates:['shark']});
   assert.equal(response.ok,false);assert.match(response.error,/timed out/);assert.equal(f.options().signal.aborted,true);
+  assert.equal(f.intervals.size,0);
+});
+
+test('AI keeps its broker active only during a pending request and cleans up on success or cancel',async()=>{
+  const f=fixture();f.allow();let finish;
+  f.fetch(()=>new Promise(resolve=>finish=resolve));
+  const pending=f.message({action:'aiWordSearch',id:'active',query:'music',candidates:['guitar']});await new Promise(setImmediate);
+  assert.equal(f.intervals.size,1);await [...f.intervals.values()][0]();assert.equal(f.heartbeats(),1);
+  finish({ok:true,json:async()=>({matches:[]})});assert.equal((await pending).ok,true);assert.equal(f.intervals.size,0);
+  f.fetch((_url,{signal})=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true})));
+  const cancelled=f.message({action:'aiWordSearch',id:'cancel',query:'music',candidates:['guitar']});await new Promise(setImmediate);
+  await f.message({action:'aiCancel',id:'cancel'});assert.equal((await cancelled).cancelled,true);assert.equal(f.intervals.size,0);
 });

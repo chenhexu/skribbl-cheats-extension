@@ -1,10 +1,10 @@
-# Chrome Web Store submission fields — 2.3.0
+# Chrome Web Store submission fields — 2.3.3
 
-Updated October 27, 2026. These descriptions match the current standalone extension. Replace the older submission text; the rejected 2.1.0 draft does not update itself when local files change.
+Updated October 28, 2026. These descriptions match the current standalone extension. Replace the older submission text; the rejected 2.1.0 draft does not update itself when local files change.
 
 ## Rejection addressed: Purple Potassium / unused storage
 
-The screenshot rejects **2.1.0** for requesting `storage` without using it. The current **2.3.0** package uses `chrome.storage.local` for the AI engine choice, five shared Auto-Drawer preferences and measured drawing-event latency. Legacy guesser settings/word caches separately use the site's `localStorage`.
+The screenshot rejects **2.1.0** for requesting `storage` without using it. The current **2.3.3** package uses `chrome.storage.local` for the AI engine choice, five shared Auto-Drawer preferences and measured drawing-event latency. Legacy guesser settings/word caches separately use the site's `localStorage`.
 
 Real extracted-ZIP tests verified preference writes, sharing across viewers, and persistence after a full browser restart. Removing `storage` from an isolated test copy made the same save/restore features fail. Keep the permission for these implemented features; do not upload the old rejected ZIP. See [audit evidence](docs/STORE_PERMISSIONS_AUDIT.md).
 
@@ -20,10 +20,10 @@ Assist Skribbl play with hint-matching word suggestions and user-controlled gues
 chrome.storage.local saves the AI engine choice (Chrome GPU, Chrome CPU or Python service), five Auto-Drawer preferences (drawing speed, target time, subject/background mode, line detector and color amplification), and measured drawing-event latency. Choices persist across browser restarts and are shared between the game panel and extension-owned viewers. Data stays on the device. Legacy guesser settings and word caches separately use the site's localStorage.
 ```
 
-## Offscreen justification
+## Optional Offscreen justification
 
 ```text
-The Chrome AI engine creates the packaged browser-ai/offscreen.html document with the WORKERS reason. It hosts a dedicated worker running packaged ONNX models for word suggestions, foreground masks and line detection. This keeps inference off the game UI thread and available across tabs without a permanent visible tab. The document is closed when changing engines or unloading models. Python mode does not need it. Real extension tests verify creation, inference, closure and backend persistence.
+Offscreen is an optional permission requested when the user chooses a Chrome AI engine or clicks Load AI models in AI setup. The engine creates the packaged browser-ai/offscreen.html document with the WORKERS reason. It hosts a dedicated worker running packaged ONNX models for word suggestions, foreground masks and line detection. This keeps inference off the game UI thread and available across tabs without a permanent visible tab. The document is closed when changing engines or unloading models. Python mode and ordinary guessing do not need this grant. Real extension tests verify the default ungranted state, permission grant on engine choice, creation, inference, closure and backend persistence.
 ```
 
 The extension-page CSP enables wasm-unsafe-eval for packaged ONNX Runtime WebAssembly. It does not enable remote scripts or unsafe-eval. Browser model/runtime/tokenizer files and licenses are included in the ZIP.
@@ -68,4 +68,4 @@ Use the current [PRIVACY.md](PRIVACY.md) consistently with the listing/form answ
 
 ## Submission handling
 
-Upload the current `dist/skribbl-auto-guesser-2.3.0.zip` as an updated draft, replace outdated justifications/privacy text, and include the storage reproduction steps. The old rejection remains until a new submission is reviewed. This audit addresses the stated unused-storage issue; it does not guarantee Chrome Web Store approval or certify every other policy. No draft, appeal or publication was sent during this audit.
+Upload the current `dist/skribbl-auto-guesser-2.3.3.zip` as an updated draft, replace outdated justifications/privacy text, and include the storage reproduction steps. The old rejection remains until a new submission is reviewed. This audit addresses the stated unused-storage issue; it does not guarantee Chrome Web Store approval or certify every other policy. No draft, appeal or publication was sent during this audit.

@@ -574,8 +574,8 @@
   // a sealed contour + bucket; irregular shapes keep the existing fill path.
   async function pencilRegion(r,ids,w,opts,signal) {
     const perimeter=r.contours.reduce((n,p)=>n+pathLength(p),0),width=2*r.area/(perimeter||1);
-    if(width<7||width>45||r.area<100)return null;
-    const sizes=[10,20,32,40].filter(size=>Math.abs(size-width)<=Math.max(4,width*.35));
+    if(width<2||width>45||r.area<24)return null;
+    const sizes=[4,10,20,32,40].filter(size=>Math.abs(size-width)<=Math.max(4,width*.35));
     if(!sizes.length)return null;
     const boxWidth=r.right-r.x,boxHeight=r.bottom-r.y;
     if(r.area/(boxWidth*boxHeight)>.6&&Math.min(boxWidth,boxHeight)>Math.max(...sizes)*1.15)return null;
@@ -587,16 +587,100 @@
     for(let y=1;y<rh-1;y++)for(let x=1;x<rw-1;x++){const i=y*rw+x;if(distance[i])distance[i]=Math.min(distance[i],distance[i-1]+1,distance[i-rw]+1,distance[i-rw-1]+1,distance[i-rw+1]+1);}
     let deepest=0;
     for(let y=rh-2;y>0;y--)for(let x=rw-2;x>0;x--){const i=y*rw+x;if(distance[i]){distance[i]=Math.min(distance[i],distance[i+1]+1,distance[i+rw]+1,distance[i+rw-1]+1,distance[i+rw+1]+1);deepest=Math.max(deepest,distance[i]);}}
-    if(deepest>Math.max(...sizes)*.55+2)return null;
+    if(deepest>Math.max(...sizes)*1.5+2)return null;
     const skeleton=await thin(target,rw,rh,signal),raw=await trace(skeleton,rw,rh,signal);
-    if(!raw.length||raw.length>12)return null;
+    if(!raw.length||raw.length>128)return null;
+    const at=(x,y)=>{x=Math.round(x);y=Math.round(y);return x>=0&&y>=0&&x<rw&&y<rh&&target[y*rw+x];};
+    // Pair the two boundaries across the local normal. Parallel here means
+    // their smoothed tangent directions agree (cosine >= .9), not that their
+    // curvature values happen to match at a single raster pixel.
+    let parallel=0,compared=0;
+    const ribbons=raw.map(points=>{
+      const loop=points.length>3&&points[0].x===points.at(-1).x&&points[0].y===points.at(-1).y,n=points.length-(loop?1:0),reach=Math.max(7,Math.min(14,Math.round(width))),index=i=>loop?(i%n+n)%n:clamp(i,0,n-1);
+      const sections=points.map((p,i)=>{
+        const a=points[index(i-reach)],b=points[index(i+reach)],length=Math.hypot(b.x-a.x,b.y-a.y)||1,nx=-(b.y-a.y)/length,ny=(b.x-a.x)/length;
+        const side=direction=>{let d=0;while(d<44&&at(p.x+nx*(d+.5)*direction,p.y+ny*(d+.5)*direction))d+=.5;return d+.25;},left=side(1),right=side(-1);
+        return {x:p.x+nx*(left-right)/2,y:p.y+ny*(left-right)/2,nx,ny,width:left+right,left:{x:p.x+nx*left,y:p.y+ny*left},right:{x:p.x-nx*right,y:p.y-ny*right}};
+      });
+      for(let i=loop?0:reach;i<(loop?n:n-reach);i+=2){
+        const a=sections[index(i-reach)],b=sections[index(i+reach)],lx=b.left.x-a.left.x,ly=b.left.y-a.left.y,rx=b.right.x-a.right.x,ry=b.right.y-a.right.y,den=Math.hypot(lx,ly)*Math.hypot(rx,ry);
+        if(den>1){compared++;if((lx*rx+ly*ry)/den>=.9)parallel++;}
+      }
+      return sections;
+    });
+    const parallelScore=compared?parallel/compared:0;
     const paths=raw.map(p=>curvePath(p,opts.tolerance)),length=paths.reduce((n,p)=>n+pathLength(p),0);
     if(length<Math.min(...sizes)*2)return null;
+    const allowance=new Uint8Array(rw*rh);
+    for(let y=0;y<rh;y++)for(let x=0;x<rw;x++)if(target[y*rw+x])for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++)if(x+dx>=0&&x+dx<rw&&y+dy>=0&&y+dy<rh)allowance[(y+dy)*rw+x+dx]=1;
+    const holes=[];
+    if(r.contours.length>1){const visited=new Uint8Array(rw*rh),queue=new Int32Array(rw*rh);for(let i=0;i<target.length;i++){if(target[i]||visited[i])continue;let head=0,tail=1,exterior=false;queue[0]=i;visited[i]=1;while(head<tail){const p=queue[head++],x=p%rw,y=(p/rw)|0;if(!x||!y||x===rw-1||y===rh-1)exterior=true;for(const q of [x?p-1:-1,x<rw-1?p+1:-1,y?p-rw:-1,y<rh-1?p+rw:-1])if(q>=0&&!target[q]&&!visited[q]){visited[q]=1;queue[tail++]=q;}}if(!exterior)holes.push(queue.slice(0,tail));}}
+    const onCanvas=(x,y)=>x+ox>=0&&x+ox<w&&y+oy>=0&&y+oy<ids.length/w;
+    const safeDot=(x,y,size)=>{const radius=size/2;for(let py=Math.floor(y-radius);py<=Math.ceil(y+radius);py++)for(let px=Math.floor(x-radius);px<=Math.ceil(x+radius);px++)if((px-x)**2+(py-y)**2<=radius**2&&onCanvas(px,py)&&(px<0||py<0||px>=rw||py>=rh||!allowance[py*rw+px]))return false;return true;};
+    const safeSegment=(a,b,size)=>{const steps=Math.max(1,Math.ceil(Math.hypot(b.x-a.x,b.y-a.y)*2));for(let i=0;i<=steps;i++)if(!safeDot(a.x+(b.x-a.x)*i/steps,a.y+(b.y-a.y)*i/steps,size))return false;return true;};
+    const smooth=points=>{const loop=points.length>3&&points[0].x===points.at(-1).x&&points[0].y===points.at(-1).y,n=points.length-(loop?1:0);return points.map((p,i)=>{if(!loop&&(i<2||i>=n-2))return p;let x=0,y=0;for(let j=-2;j<=2;j++){const q=points[loop?(i+j+n)%n:clamp(i+j,0,n-1)];x+=q.x;y+=q.y;}return {x:x/5,y:y/5};});};
+    function constrained(lines,size){
+      const result=[];
+      for(const line of lines){let run=[];
+        const flush=()=>{if(run.length>1){const rounded=curvePath(smooth(run),Math.min(1,opts.tolerance));if(rounded.every((p,i)=>!i||safeSegment(rounded[i-1],p,size)))result.push(rounded);else{const nodes=simplify(run,.6),fit=[{x:nodes[0].x,y:nodes[0].y}];for(let i=1;i<nodes.length;i++){const a=nodes[i-1],b=nodes[i];fit.push(...(safeSegment(a,b,size)?[{x:b.x,y:b.y}]:run.slice(a.sourceIndex+1,b.sourceIndex+1)));}result.push(fit);}}run=[];};
+        for(const p of line){let bestPoint=null,bestDistance=Infinity;const x=Math.round(p.x),y=Math.round(p.y);
+          for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const q={x:x+dx,y:y+dy},d=(q.x-p.x)**2+(q.y-p.y)**2;if(d<bestDistance&&safeDot(q.x,q.y,size)){bestDistance=d;bestPoint=q;}}
+          if(!bestPoint){flush();continue;}
+          const previous=run.at(-1);if(previous&&(Math.hypot(previous.x-bestPoint.x,previous.y-bestPoint.y)>3||!safeSegment(previous,bestPoint,size)))flush();
+          if(!run.length||run.at(-1).x!==bestPoint.x||run.at(-1).y!==bestPoint.y)run.push(bestPoint);
+        }
+        flush();
+      }
+      return result;
+    }
+    function repaired(lines,size){
+      const result=lines.slice(),painted=rasterContours(lines,rw,rh,0,0,size===4?3.5:size),near=new Uint8Array(rw*rh),radius=size/2;
+      const mark=(x,y)=>{for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++)if(x+dx>=0&&x+dx<rw&&y+dy>=0&&y+dy<rh)near[(y+dy)*rw+x+dx]=1;};
+      for(let y=0;y<rh;y++)for(let x=0;x<rw;x++)if(painted[y*rw+x])mark(x,y);
+      let repairs=0;
+      for(let y=0;y<rh;y++)for(let x=0;x<rw;x++){
+        const i=y*rw+x;if(!target[i]||near[i]||repairs>=256)continue;
+        let bestPoint=null,bestAdded=0;
+        for(let dy=-radius;dy<=radius;dy++)for(let dx=-radius;dx<=radius;dx++)if(dx*dx+dy*dy<=radius*radius){const px=x+dx,py=y+dy;if(!safeDot(px,py,size))continue;let added=0;for(let qy=Math.max(0,py-radius);qy<=Math.min(rh-1,py+radius);qy++)for(let qx=Math.max(0,px-radius);qx<=Math.min(rw-1,px+radius);qx++)if((qx-px)**2+(qy-py)**2<=radius**2&&target[qy*rw+qx]&&!near[qy*rw+qx])added++;if(added>bestAdded){bestAdded=added;bestPoint={x:px,y:py};}}
+        if(!bestPoint)continue;
+        let end=null;for(const [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]]){const q={x:bestPoint.x+dx,y:bestPoint.y+dy};if(safeSegment(bestPoint,q,size)){end=q;break;}}
+        if(!end)continue;
+        const patch=[bestPoint,end],left=Math.max(0,Math.min(bestPoint.x,end.x)-radius),top=Math.max(0,Math.min(bestPoint.y,end.y)-radius),right=Math.min(rw,Math.max(bestPoint.x,end.x)+radius+1),bottom=Math.min(rh,Math.max(bestPoint.y,end.y)+radius+1),pw=right-left,ph=bottom-top,mask=rasterContours([patch],pw,ph,left,top,size===4?3.5:size);
+        for(let py=0;py<ph;py++)for(let px=0;px<pw;px++)if(mask[py*pw+px]){painted[(py+top)*rw+px+left]=1;mark(px+left,py+top);}
+        result.push(patch);repairs++;
+      }
+      return result;
+    }
     let best=null;
     for(const brushSize of sizes) {
-      const painted=rasterContours(paths,rw,rh,0,0,brushSize);let covered=0,spill=0,unsafe=false;
+      // A hard disk at integer pixel centers otherwise counts both edges of
+      // a 4px pencil as fully black (five raster rows). Reserve its AA fringe.
+      const rasterSize=brushSize===4?3.5:brushSize;
+      const alternatives=[brushSize===4?raw.map(p=>curvePath(p,Math.min(.4,opts.tolerance))):paths];
+      if(parallelScore>=.9){
+        const centers=ribbons.map(p=>curvePath(p.map(q=>({x:q.x,y:q.y})),Math.min(brushSize===4?.4:1,opts.tolerance)));
+        alternatives.push(centers);
+        // A 6px line has no exact game pencil size. A few offset pencil
+        // sweeps preserve its width without sealing and bucket-clicking it.
+        if(width>brushSize*.95)alternatives.push(ribbons.flatMap(p=>[-1,0,1].map(side=>curvePath(p.map(q=>{const offset=Math.max(0,(q.width-brushSize)/2)*side;return {x:q.x+q.nx*offset,y:q.y+q.ny*offset};}),Math.min(brushSize===4?.3:.6,opts.tolerance)))));
+        if(brushSize===4&&width>brushSize*.95)alternatives.push(ribbons.flatMap(p=>[-1,0,1].map(side=>curvePath(smooth(p.map(q=>{const offset=Math.max(0,(q.width-brushSize)/2)*side;return {x:q.x+q.nx*offset,y:q.y+q.ny*offset};})),Math.min(1,opts.tolerance)))));
+        if(brushSize===4){
+          const safePaths=constrained(raw,brushSize);alternatives.push(safePaths,repaired(safePaths,brushSize));
+          alternatives.push(constrained(ribbons.flatMap(p=>[-1,0,1].map(side=>p.map(q=>{const offset=Math.max(0,(q.width-brushSize)/2)*side;return {x:q.x+q.nx*offset,y:q.y+q.ny*offset};}))),brushSize));
+        }
+      }
+      for(const candidatePaths of alternatives){
+      if(!candidatePaths.length)continue;
+      // Offset passes can duplicate a center pass or tiny junction fragments.
+      // Keep paths only when they add source coverage, before costing the plan.
+      let selectedPaths=candidatePaths;
+      if(candidatePaths.length>raw.length){const coverage=new Uint8Array(rw*rh);selectedPaths=[];for(const path of candidatePaths.slice().sort((a,b)=>pathLength(b)-pathLength(a))){const left=Math.max(0,Math.floor(Math.min(...path.map(p=>p.x))-brushSize/2)),top=Math.max(0,Math.floor(Math.min(...path.map(p=>p.y))-brushSize/2)),right=Math.min(rw,Math.ceil(Math.max(...path.map(p=>p.x))+brushSize/2)+1),bottom=Math.min(rh,Math.ceil(Math.max(...path.map(p=>p.y))+brushSize/2)+1),pw=right-left,ph=bottom-top,mask=rasterContours([path],pw,ph,left,top,rasterSize);let added=0;for(let y=0;y<ph;y++)for(let x=0;x<pw;x++){const i=(y+top)*rw+x+left;if(mask[y*pw+x]&&target[i]&&!coverage[i])added++;}if(!added)continue;selectedPaths.push(path);for(let y=0;y<ph;y++)for(let x=0;x<pw;x++)if(mask[y*pw+x])coverage[(y+top)*rw+x+left]=1;}}
+      const painted=rasterContours(selectedPaths,rw,rh,0,0,rasterSize);let covered=0,spill=0,unsafe=false,missed=0;
       for(let y=0;y<rh;y++)for(let x=0;x<rw;x++) {
-        const i=y*rw+x;if(!painted[i])continue;
+        const i=y*rw+x;
+        if(!onCanvas(x,y))continue;
+        if(target[i]&&!painted[i]){let near=false;for(let dy=-1;dy<=1&&!near;dy++)for(let dx=-1;dx<=1;dx++)if(x+dx>=0&&x+dx<rw&&y+dy>=0&&y+dy<rh&&painted[i+dy*rw+dx]){near=true;break;}if(!near)missed++;}
+        if(!painted[i])continue;
         if(target[i]){covered++;continue;}spill++;
         // Allow only one pixel of raster/center rounding, never a shortcut
         // across another feature, transparent hole or neighboring color.
@@ -604,8 +688,13 @@
         if(!near)unsafe=true;
       }
       const overlap=covered/(r.area+spill);
-      if(unsafe||covered<r.area*.93||spill>(covered+spill)*.04||overlap<(best?.overlap||.9))continue;
-      best={kind:'pencil-region',stage:'fill',colorId:r.colorId,brushSize,paths:paths.map(p=>p.map(q=>({x:q.x+ox,y:q.y+oy}))),area:r.area,optional:true,score:r.area,overlap};
+      const exact=covered>=r.area*.93&&spill<=(covered+spill)*.04&&overlap>=.9;
+      const parallelFit=parallelScore>=.9&&covered>=r.area*.9&&missed<=r.area*.02;
+      if(unsafe||!exact&&!parallelFit||holes.some(hole=>hole.every(i=>painted[i])))continue;
+      const candidate={kind:'pencil-region',stage:'fill',colorId:r.colorId,brushSize,paths:selectedPaths.map(p=>p.map(q=>({x:q.x+ox,y:q.y+oy}))),area:r.area,optional:true,score:r.area,overlap,parallelScore};
+      if(!best||strokeCost(candidate)<strokeCost(best))best=candidate;
+      await checkpoint(signal);
+      }
       await checkpoint(signal);
     }
     return best;
@@ -621,9 +710,12 @@
       if(!r.contours.length)continue;
       const pencil=await pencilRegion(r,ids,w,opts,signal);
       const boundaryCost=r.contours.reduce((cost,p)=>cost+(p.length+1)*8+2,0);
-      if(pencil&&strokeCost(pencil)+32<boundaryCost*(r.colorId===1?2:1)+50) {
+      const addPencil=()=>{
         fills.push(pencil);
         if(r.colorId===1)for(let y=r.y;y<r.bottom;y++)for(let x=r.x;x<r.right;x++)if(ids[y*w+x]===r.id)for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++)if(x+dx>=0&&x+dx<w&&y+dy>=0&&y+dy<h)pencilBlack[(y+dy)*w+x+dx]=1;
+      };
+      if(pencil&&(pencil.parallelScore>=.9||strokeCost(pencil)+32<boundaryCost*(r.colorId===1?2:1)+50)) {
+        addPencil();
         await checkpoint(signal);continue;
       }
       const ox=Math.max(0,r.x-4),oy=Math.max(0,r.y-4),rw=Math.min(w,r.right+4)-ox,rh=Math.min(h,r.bottom+4)-oy;
@@ -645,7 +737,8 @@
         seeds.push({x:best%rw+ox,y:((best/rw)|0)+oy});
       }
       if(!safe)throw new Error('A color boundary could not be safely sealed. Select Brush strokes and process again.');
-      fills.push({kind:'region',stage:'fill',colorId:r.colorId,brushSize:4,contours:r.contours,seeds,area:r.area,optional:true,score:r.area});
+      const region={kind:'region',stage:'fill',colorId:r.colorId,brushSize:4,contours:r.contours,seeds,area:r.area,optional:true,score:r.area};
+      if(pencil&&strokeCost(pencil)+32<strokeCost(region)+(r.colorId===1?boundaryCost:0)+32)addPencil();else fills.push(region);
       if(r.id%32===0){onStage?.('Checking color region '+(r.id+1)+' of '+regions.length);await checkpoint(signal);}
     }
     fills.sort((a,b)=>Number(a.kind==='pencil-region'&&a.colorId===1)-Number(b.kind==='pencil-region'&&b.colorId===1)||counts.get(b.colorId)-counts.get(a.colorId)||a.colorId-b.colorId||b.area-a.area);

@@ -10,10 +10,10 @@ Use Node.js 20+ and Windows PowerShell. Clone the repository, then run:
 npm ci
 ```
 
-Download `skribbl-auto-guesser-2.3.0.zip` from [the matching GitHub release](https://github.com/chenhexu/skribbl-cheats-extension/releases/tag/v2.3.0). Restore models from that ZIP:
+Download `skribbl-auto-guesser-2.3.3.zip` from [the matching GitHub release](https://github.com/chenhexu/skribbl-cheats-extension/releases/tag/v2.3.3). Restore models from that ZIP:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\restore-browser-models.ps1 -Archive "C:\path\to\skribbl-auto-guesser-2.3.0.zip"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\restore-browser-models.ps1 -Archive "C:\path\to\skribbl-auto-guesser-2.3.3.zip"
 npm run build:ai
 ```
 
@@ -56,6 +56,6 @@ The exporter reads local checkpoints, verifies ONNX graphs and records hashes, t
 npm run package
 ```
 
-This rebuilds browser AI, checks model hashes, validates manifest references and JavaScript syntax, and writes `dist/skribbl-auto-guesser-2.3.0.zip` plus `.zip.json` metadata containing its SHA256, source commit and file list. The modified flag covers tracked source files; unrelated untracked local files are excluded. The explicit allowlist excludes tests, screenshots, Python, npm dependencies and submission documents. Model/runtime licenses and privacy/third-party notices are retained. Commit the intended source changes before the final package build so its metadata identifies a clean source revision.
+This rebuilds browser AI, checks model hashes, validates manifest references and JavaScript syntax, and writes `dist/skribbl-auto-guesser-2.3.3.zip` plus `.zip.json` metadata containing its SHA256, source commit and file list. The modified flag covers tracked source files; unrelated untracked local files are excluded. The explicit allowlist excludes tests, screenshots, Python, npm dependencies and submission documents. Model/runtime licenses and privacy/third-party notices are retained. Commit the intended source changes before the final package build so its metadata identifies a clean source revision.
 
 [Store submission checklist](../store/README.md) · [Permission evidence](STORE_PERMISSIONS_AUDIT.md) · [Browser AI architecture and verification](BROWSER_AI.md)

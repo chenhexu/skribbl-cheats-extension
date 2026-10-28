@@ -157,7 +157,32 @@
       return rank(q,candidates,{...options,semantic:this.scores||[]});
     }
   }
-  const api={normalize,singular,spelling,rank,indicator,Controller};
+  async function runtimeRequest(runtime,action,data,signal,{timeout=35000}={}){
+    const disconnected=error=>/message channel closed|message port closed|receiving end does not exist|could not establish connection/i.test(error.message);
+    for(let attempt=0;attempt<2;attempt++){
+      signal.throwIfAborted();
+      const id=crypto.randomUUID();
+      const cancel=()=>{try{runtime.sendMessage({action:'aiCancel',id}).catch(()=>{});}catch{}};
+      let timer,rejectWait;
+      const stopped=new Promise((_,reject)=>rejectWait=reject);
+      const abort=()=>{cancel();rejectWait(signal.reason);};
+      signal.addEventListener('abort',abort,{once:true});
+      timer=setTimeout(()=>{cancel();rejectWait(Error('Local AI request timed out. Try searching again.'));},timeout);
+      try{
+        const response=await Promise.race([runtime.sendMessage({action,id,...data}),stopped]);signal.throwIfAborted();
+        if(!response)throw Error('AI message channel closed');
+        if(!response.ok)throw Object.assign(Error(response.error||'Local AI did not respond'),{code:response.code});
+        return response;
+      }catch(error){
+        signal.throwIfAborted();
+        if(/extension context invalidated/i.test(error.message))throw Error('Refresh the Skribbl tab to reconnect the extension.');
+        if(!disconnected(error))throw error;
+        cancel();
+        if(attempt)throw Object.assign(Error('AI connection was interrupted. Try searching again.'),{code:'AI_CONNECTION_LOST'});
+      }finally{clearTimeout(timer);signal.removeEventListener('abort',abort);}
+    }
+  }
+  const api={normalize,singular,spelling,rank,indicator,Controller,runtimeRequest};
   if(typeof module==='object' && module.exports)module.exports=api;
   root.SAGWordSearch=api;
 })(typeof globalThis==='object'?globalThis:this);

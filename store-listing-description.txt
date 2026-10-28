@@ -25,12 +25,12 @@ Open Local AI setup and choose Inside Chrome - GPU acceleration, Inside Chrome -
 Local AI supplies semantic word suggestions, foreground masks and optional line detection. Browser line detection, curated categories, Auto settings and manual selection work without neural inference. AI may miss parts or return weak associations; the preview and selection tools let you correct it.
 
 WORKSPACE AND PREFERENCES
-Drag the drawer out of its dock to expand it, resize it or open the large image viewer for cropping and previews. Drawing starts from the Skribbl panel. Local AI setup chooses the engine shared by both. Drawing speed, target, subject/background mode, line detector and color amplification are remembered. Download a preview PNG or plan JSON when needed.
+Drag the drawer out of its dock to expand it, resize from any edge or corner, or open the large image viewer for cropping and previews. Both panels can sit flush against the browser content edges. Drawing starts from the Skribbl panel. Local AI setup chooses the engine shared by both. Drawing speed, target, subject/background mode, line detector and color amplification are remembered. Download a preview PNG or plan JSON when needed.
 
 PRIVACY AND ACCESS
 Content scripts run only on skribbl.io. Chrome AI uses packaged models on your device. No hosted inference provider, analytics collector or API token is used. Guesses and drawing input go to Skribbl, and optional public word-list downloads contact GitHub/jsDelivr. Python mode sends images or search inputs only to your own service at 127.0.0.1:8765 after you grant access. Preferences and custom word choices are stored locally.
 
-Storage remembers preferences and the AI engine; Offscreen hosts the browser AI worker; Debugger performs drawing you start on the game canvas. The optional Python companion is installed separately from the source project. See the linked privacy policy for full details.
+Storage remembers preferences and the AI engine; Debugger performs drawing you start on the game canvas. Optional Offscreen access is requested when enabling Chrome AI and hosts its worker. The optional Python companion is installed separately from the source project. See the linked privacy policy for full details.
 
 GETTING STARTED
 1. Open or refresh skribbl.io after installation.

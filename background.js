@@ -19,6 +19,9 @@ async function aiRequest(msg, sender) {
   const controller = new AbortController();
   aiRequests.set(key, controller);
   const timer = setTimeout(() => controller.abort(), words ? 30000 : 120000);
+  // Only while a bounded AI request is active: cold model loading can otherwise
+  // leave this broker idle long enough for Chrome to close its response channel.
+  const keepAlive = setInterval(() => chrome.runtime.getPlatformInfo().catch(() => {}), 20000);
   try {
     const mode=await browserAI.mode();
     controller.signal.throwIfAborted();
@@ -40,8 +43,8 @@ async function aiRequest(msg, sender) {
     let binary = '';for (let i=0;i<bytes.length;i+=8192) binary += String.fromCharCode(...bytes.subarray(i,i+8192));
     return { ok: true, image: 'data:image/png;base64,' + btoa(binary) };
   } catch (error) {
-    throw new Error(error.name === 'AbortError' ? 'Local AI request stopped or timed out' : 'Local AI: ' + error.message);
-  } finally { clearTimeout(timer);if(aiRequests.get(key)===controller)aiRequests.delete(key); }
+    throw Object.assign(new Error(error.name === 'AbortError' ? 'Local AI request stopped or timed out' : 'Local AI: ' + error.message),{name:error.name,code:error.code});
+  } finally { clearTimeout(timer);clearInterval(keepAlive);if(aiRequests.get(key)===controller)aiRequests.delete(key); }
 }
 
 function ensureAttached(tabId) {
@@ -173,7 +176,7 @@ if (typeof chrome !== 'undefined' && chrome.runtime) {
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!msg || sender.id !== chrome.runtime.id) return false;
     if(msg.target==='browser-ai-offscreen')return false;
-    const answer = promise => { Promise.resolve(promise).then(value => sendResponse({ ok: true, ...value })).catch(e => sendResponse({ ok: false, error: e.message, cancelled: e.name === 'AbortError' }));return true; };
+    const answer = promise => { Promise.resolve(promise).then(value => sendResponse({ ok: true, ...value })).catch(e => sendResponse({ ok: false, error: e.message, code:e.code, cancelled: e.name === 'AbortError' }));return true; };
     if (['aiHealth','aiLineart','aiSubject','aiWordSearch'].includes(msg.action)) return answer(aiRequest(msg, sender));
     if(msg.action==='aiConfiguration')return answer(browserAI.mode().then(mode=>({mode})));
     if(msg.action==='aiConfigure'){

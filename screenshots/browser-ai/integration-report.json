@@ -1,5 +1,15 @@
 {
   "externalRequests": [],
+  "initialPermissions": {
+    "origins": [
+      "https://skribbl.io/*"
+    ],
+    "permissions": [
+      "debugger",
+      "storage"
+    ]
+  },
+  "offscreenGrantedOnChoice": true,
   "gameSearch": [
     "guitar",
     "stereo",
@@ -23,12 +33,14 @@
     "soccer",
     "iphone"
   ],
+  "offscreenReconnect": true,
+  "backgroundReconnect": true,
   "subject": {
     "method": "ai",
-    "modelMs": 2040.3999999761581
+    "modelMs": 4192.100000023842
   },
   "linePlan": {
-    "modelMs": 1981.1000000238419,
+    "modelMs": 4459.900000035763,
     "strokes": 173,
     "detector": "ai"
   },

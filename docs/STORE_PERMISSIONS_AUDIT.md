@@ -1,8 +1,8 @@
-# Chrome Web Store permission audit — 2.3.0
+# Chrome Web Store permission audit — 2.3.3
 
-The original storage rejection was audited in 2.2.27. Version 2.3.0 adds an actively used offscreen permission for in-Chrome AI and stores the selected AI backend. Real extension integration tests verify offscreen creation, model inference, worker closure on engine change and persistence after restart; see [browser AI evidence](BROWSER_AI.md). The historical storage negative-control evidence below remains applicable. Use the current release ZIP and submission text rather than the older filename mentioned in historical results.
+Version 2.3.3 requires only `storage` and `debugger`. It moves `offscreen` to optional permissions, requested in AI setup when enabling a Chrome engine or loading its models. Python access remains a separate optional origin restricted to `http://127.0.0.1:8765/*`. A fresh installation has neither AI grant. Real extension tests verify grants, inference, worker closure, connection recovery and persistence; see [browser AI evidence](BROWSER_AI.md).
 
-Date: October 27, 2026. Scope: the screenshot's **Purple Potassium / requesting but not using storage** rejection for version **2.1.0**, and the current packaged manifest. This is not a guarantee of Google approval or a full store-policy certification.
+Date: October 28, 2026. Scope: the screenshot's **Purple Potassium / requesting but not using storage** rejection for version **2.1.0**, and a renewed review of the current packaged permissions. This is not a guarantee of Google approval or a full store-policy certification.
 
 ## Finding
 
@@ -23,12 +23,14 @@ Chrome requires the `storage` permission for its extension Storage API. Its poli
 | Requested access | Current use | Result |
 | --- | --- | --- |
 | Required `storage` | Shared persistent drawer preferences and observed drawing latency | Used |
-| Required `offscreen` | Packaged worker for in-Chrome models; created with WORKERS and closed on unload/engine change | Used; real extension inference verified |
+| Optional `offscreen` | Packaged worker for in-Chrome models; granted from AI setup, created with WORKERS and closed on unload/engine change | Used only when choosing Chrome AI; ungranted by default |
 | Required `debugger` | User-started trusted drawing/tool input through CDP; cancellation/release/detach | Used |
 | Content-script matches `https://skribbl.io/*` | Hints/chat, suggestions, guess submission and drawer integration | Restricted to the game site |
 | Optional `http://127.0.0.1:8765/*` | Explicit Local AI setup; manifest, permission request and background check fix the port | Optional, restricted to 8765, and checked before access |
 
 No `tabs`, `scripting`, `activeTab`, `unlimitedStorage` or all-sites host permission is requested. Opening the packaged large viewer with `chrome.tabs.create` does not require adding the sensitive `tabs` permission. [Chrome Tabs API permissions](https://developer.chrome.com/docs/extensions/reference/api/tabs#permissions).
+
+Chrome explicitly excludes `debugger` from optional permissions. Trusted canvas input needs it; synthetic DOM input is not an equivalent drawing transport. Chrome does not provide a narrower per-site debugger permission, so attachment is restricted by the extension's game-only entry points. Storage remains required for implemented shared preferences; Offscreen can be optional and was moved accordingly. [Optional permission restrictions](https://developer.chrome.com/docs/extensions/reference/api/permissions#implement_optional_permissions).
 
 The extension's JS, page bridge and imported transport are packaged. Public word-list downloads are text; local AI returns PNG/JSON. No remotely downloaded JS/WASM executes in the browser. Python inference is a separate local installation. [Chrome remote-hosted-code guidance](https://developer.chrome.com/docs/extensions/develop/migrate/remote-hosted-code).
 

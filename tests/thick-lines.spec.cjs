@@ -11,3 +11,17 @@ test('wide pencil regions render and replay without filling holes or losing thic
   expect(result.sizes).toEqual([20,32,40]);expect(result.metrics.buckets).toBe(0);expect(result.differences.map(d=>d.changed)).toEqual([0,0,0,0,0]);expect(result.thick).toEqual([0,0,0,255]);expect(result.ring).toEqual([0,0,0,255]);expect(result.outside).toEqual([255,255,255,255]);expect(result.hole).toEqual([255,255,255,255]);
   await page.locator('#studio').screenshot({path:info.outputPath('wide-pencil-preview.png')});await require('node:fs/promises').writeFile(info.outputPath('wide-pencil-metrics.json'),JSON.stringify(result,null,2));
 });
+
+test('narrow curved and branched outlines use pencils with stable preview playback',async({page},info)=>{
+  await page.goto('/');
+  const branches=Array.from({length:6},(_,i)=>`<path d="M50 ${60+i*80}L340 ${80+i*80}"/>`).join('');
+  const svg=Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="white"/><g fill="none" stroke="black" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M50 0V570"/>${branches}<circle cx="620" cy="330" r="24"/></g><path d="M690 100C470 100 470 500 690 500" fill="none" stroke="black" stroke-width="6" stroke-linecap="round"/></svg>`);
+  await page.getByLabel('Upload image',{exact:true}).setInputFiles({name:'narrow-ink.svg',mimeType:'image/svg+xml',buffer:svg});await expect(page.getByRole('button',{name:'Process image',exact:true})).toBeEnabled();await page.getByRole('button',{name:'Process image',exact:true}).click();await expect(page.getByRole('button',{name:'Download plan JSON',exact:true})).toBeEnabled({timeout:90000});
+  const result=await page.evaluate(async()=>{
+    const plan=studio.getPlan(),make=()=>{const c=document.createElement('canvas');c.width=800;c.height=600;return c;},reference=make().getContext('2d',{willReadFrequently:true}),actual=make().getContext('2d',{willReadFrequently:true}),renderer=SAGDrawingEngine.createPlanRenderer(plan,make),differences=[];
+    for(const fraction of [.02,.5,1,.1,1]){SAGDrawingEngine.renderPlan(reference,plan,{fraction});renderer.render(actual,{fraction});const a=reference.getImageData(0,0,800,600).data,b=actual.getImageData(0,0,800,600).data;let changed=0;for(let i=0;i<a.length;i++)if(a[i]!==b[i])changed++;differences.push(changed);}
+    const image=new Image();image.src=studio.getSession().source;await image.decode();const source=make().getContext('2d',{willReadFrequently:true});source.drawImage(image,0,0,800,600);const input=source.getImageData(0,0,800,600).data,painted=actual.getImageData(0,0,800,600).data;let ink=0,hit=0;for(let i=0;i<input.length;i+=4)if(input[i]<128){ink++;if(painted[i]<128)hit++;}
+    renderer.dispose();return {metrics:plan.metrics,pencils:plan.strokes.filter(s=>s.kind==='pencil-region').map(s=>({size:s.brushSize,parallel:s.parallelScore})),sourceCoverage:hit/ink,hole:[...actual.getImageData(620,330,1,1).data],line:[...actual.getImageData(50,200,1,1).data],differences};
+  });
+  expect(result.metrics.buckets).toBe(0);expect(result.pencils.length).toBeGreaterThanOrEqual(3);expect(result.pencils.every(p=>p.size===4&&p.parallel>=.9)).toBe(true);expect(result.sourceCoverage).toBeGreaterThanOrEqual(.9);expect(result.hole).toEqual([255,255,255,255]);expect(result.line).toEqual([0,0,0,255]);expect(result.differences).toEqual([0,0,0,0,0]);await page.locator('#studio').screenshot({path:info.outputPath('narrow-pencil-preview.png')});
+});

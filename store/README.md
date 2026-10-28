@@ -1,13 +1,13 @@
-# Chrome Web Store submission kit — 2.3.0
+# Chrome Web Store submission kit — 2.3.3
 
-Prepared October 27, 2026. This kit is ready for the developer dashboard; it does not submit or publish the extension. The package must still pass Google's review. Use the current 2.3.0 ZIP, not the rejected 2.1.0 draft.
+Prepared October 28, 2026. This kit is ready for the developer dashboard; it does not submit or publish the extension. The package must still pass Google's review. Use the current 2.3.3 ZIP, not the rejected 2.1.0 draft.
 
 ## Listing fields
 
 | Field | Prepared value |
 | --- | --- |
 | Name | Skribbl Auto Guesser |
-| Version | 2.3.0 |
+| Version | 2.3.3 |
 | Short description | Hint-aware word suggestions and an image Auto-Drawer for skribbl.io, with optional AI that runs on your computer. |
 | Detailed description | Copy [store-listing-description.txt](../store-listing-description.txt); plain text, no Markdown formatting required. |
 | Language | English |
@@ -21,18 +21,18 @@ The homepage, support and privacy links become current once the source commit is
 
 ## Upload files
 
-- **Extension:** `dist/skribbl-auto-guesser-2.3.0.zip`, produced by `npm run package`. Its adjacent `.zip.json` records SHA256, source revision and the exact allowlist. Do not upload the repository's source-code ZIP or this submission folder as the extension.
+- **Extension:** `dist/skribbl-auto-guesser-2.3.3.zip`, produced by `npm run package`. Its adjacent `.zip.json` records SHA256, source revision and the exact allowlist. Do not upload the repository's source-code ZIP or this submission folder as the extension.
 - **Store icon:** [128px PNG](../icons/icon128.png), also referenced by the packaged manifest. Smaller icons are included for Chrome UI.
 - **Screenshot 1:** [Drawing Studio](assets/drawing-studio-1280x800.png).
 - **Screenshot 2:** [Hint-aware related search](assets/word-search-1280x800.png).
 - **Screenshot 3:** [Local AI setup](assets/ai-setup-1280x800.png).
 - **Optional small promo tile:** [440 × 280 PNG](assets/promo-440x280.png).
 
-For a portable copy of these descriptions, images and guides, run `powershell -NoProfile -ExecutionPolicy Bypass -File tools/package-store-kit.ps1`. This creates `dist/chrome-web-store-kit-2.3.0.zip`, separate from the installable extension ZIP.
+For a portable copy of these descriptions, images and guides, run `powershell -NoProfile -ExecutionPolicy Bypass -File tools/package-store-kit.ps1`. This creates `dist/chrome-web-store-kit-2.3.3.zip`, separate from the installable extension ZIP.
 
 Screenshots show actual extension UI in isolated demonstration pages using project-owned sample artwork. The word-search screenshot uses synthetic game markup; no real players, chat logs or game results are shown. They do not claim that the extension is endorsed or featured by Chrome.
 
-Google currently requires an icon and at least one screenshot. The 128px icon belongs inside the extension ZIP; listing screenshots use 1280 × 800. The small promo tile is optional. Sources: [Supplying images](https://developer.chrome.com/docs/webstore/images), [Listing fields](https://developer.chrome.com/docs/webstore/cws-dashboard-listing), checked October 27, 2026.
+Google currently requires an icon and at least one screenshot. The 128px icon belongs inside the extension ZIP; listing screenshots use 1280 × 800. The small promo tile is optional. Sources: [Supplying images](https://developer.chrome.com/docs/webstore/images), [Listing fields](https://developer.chrome.com/docs/webstore/cws-dashboard-listing), checked October 28, 2026.
 
 ## Privacy and permissions
 
@@ -53,14 +53,14 @@ Drawing: upload an image, leave Use main subject off for full scenery, click Pro
 
 Word search waits for a displayed hint. Related words searches only currently hint-eligible words and spaces. Text/category matching works without AI; Chrome CPU/GPU adds packaged local model inference. Python is a separately installed optional companion and is not required for normal review.
 
-This 2.3.0 draft supersedes the 2.1.0 draft rejected for unused storage (Purple Potassium). Storage now implements shared drawer preferences, the AI engine choice and drawing-latency measurements. The current package actively uses it; please review this new package and updated justifications.
+This 2.3.3 draft supersedes the 2.1.0 draft rejected for unused storage (Purple Potassium). Storage now implements shared drawer preferences, the AI engine choice and drawing-latency measurements. The current package actively uses it; please review this new package and updated justifications.
 ```
 
 ## Final dashboard steps
 
 1. Open the existing item in the Chrome Web Store Developer Dashboard and upload the new extension ZIP as an updated draft.
 2. Replace the old beta description, screenshots and privacy/permission answers with this kit. Verify the public privacy/support links after the GitHub push.
-3. Add reviewer notes, verify developer contact details, choose distribution/visibility and confirm the uploaded version is 2.3.0.
+3. Add reviewer notes, verify developer contact details, choose distribution/visibility and confirm the uploaded version is 2.3.3.
 4. Review the dashboard's warnings and preview. Submit when you are ready; publish according to your chosen review/distribution setting.
 
 The earlier rejection cannot be cleared by editing local files alone. A new upload/review is required. Technical validation addresses the reported permission issue and does not guarantee acceptance.

@@ -8,6 +8,9 @@ async function send(message){
   if(!extension){if(['aiHealth','aiPrepare'].includes(message.action)){const response=await fetch('/health');if(!response.ok)throw Error('The Python service did not respond');return {ok:true,health:await response.json()};}throw Error('Open AI setup from the installed extension to choose an in-Chrome engine.');}
   const response=await chrome.runtime.sendMessage(message);if(!response?.ok)throw Error(response?.error||'The extension did not respond');return response;
 }
+async function allowBrowserAI(){
+  if(extension&&!await chrome.permissions.request({permissions:['offscreen']}))throw Error('In-Chrome AI access was not granted. Allow it here to load browser models, or choose Python service.');
+}
 function status(message,error=false){$('#status').textContent=message;$('#status').classList.toggle('error',error);}
 function selection(){
   $('#description').textContent=descriptions[mode];$('#terminal-help').hidden=mode!=='python';$('#browser-help').hidden=mode==='python';
@@ -22,13 +25,14 @@ async function check(id=generation){const response=await send({action:'aiHealth'
 $('#backend').addEventListener('change',async()=>{
   const requested=$('#backend').value,id=++generation;clearTimeout(pollTimer);
   $('#backend').disabled=true;$('#prepare').disabled=true;$('#benchmark').disabled=true;
-  try{await send({action:'aiConfigure',mode:requested});if(id!==generation)return;mode=requested;selection();status('Choice saved. '+(mode==='python'?'Start the terminal service, then check its connection.':'Click Load AI models to prepare this engine.'));}
+  try{if(requested!=='python')await allowBrowserAI();await send({action:'aiConfigure',mode:requested});if(id!==generation)return;mode=requested;selection();status('Choice saved. '+(mode==='python'?'Start the terminal service, then check its connection.':'Click Load AI models to prepare this engine.'));}
   catch(error){$('#backend').value=mode;status(error.message,true);}
   finally{if(id===generation){$('#backend').disabled=!extension;$('#prepare').disabled=false;}}
 });
 $('#prepare').addEventListener('click',async()=>{
   const id=++generation;activeId=crypto.randomUUID();$('#prepare').disabled=true;$('#backend').disabled=true;
   try{
+    if(mode!=='python')await allowBrowserAI();
     if(mode==='python'&&extension&&!await chrome.permissions.request({origins:['http://127.0.0.1:8765/*']}))throw Error('Python service access was not granted. In-Chrome modes do not need this permission.');
     status(mode==='python'?'Checking the terminal service…':'Loading packaged AI models. You can see each model’s progress below…');
     const poll=async()=>{try{await check(id);}catch{}if(id===generation)pollTimer=setTimeout(poll,700);};

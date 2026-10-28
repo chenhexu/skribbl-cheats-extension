@@ -1,4 +1,4 @@
-# How to use Skribbl Auto Guesser 2.3.0
+# How to use Skribbl Auto Guesser 2.3.3
 
 [Installation](../README.md#install) · [AI engine](#choose-an-ai-engine) · [Word search](#word-search-and-guessing) · [Drawing](#drawing-workflow) · [Troubleshooting](#troubleshooting)
 
@@ -7,7 +7,7 @@
 Click **Local AI setup** in Auto-Drawer or under the guesser's search box. This opens a separate setup page shared by both features.
 
 1. Select **Inside Chrome — GPU acceleration** or **Inside Chrome — CPU** for AI without a terminal. The saved default is Python until changed.
-2. Click **Load AI models**. Wait for word search, subject detection and line detection to report ready. First loading and GPU compilation can take several seconds; do this before joining a round.
+2. Allow optional Chrome AI access when choosing that engine or clicking **Load AI models**. Wait for word search, subject detection and line detection to report ready. First loading and GPU compilation can take several seconds; do this before joining a round.
 3. Optionally click **Test word-search speed**. Its result measures your computer, not a guaranteed speed on other devices.
 4. Return to Skribbl. You can close the setup tab. **Unload models** releases the Chrome AI worker; a later AI request can load it again.
 
@@ -58,6 +58,8 @@ After **Spam detected**, sending pauses for a cooldown and rejected attempts rem
 Expand **Show details** for parsing/status, custom-word **Add**, **Remove** and **Dedupe**, and refresh settings. **Refresh parse** rereads the current game hint. **Not guessed? Show words** restores suggestions after an incorrect guessed-state detection and preserves multiword lengths. Dot prefix is an optional legacy sending mode; leave it off for ordinary guesses.
 
 ## Drawing workflow
+
+Drag the Auto-Drawer header outside the guesser to open it as a floating panel. Drag its header to move it, or resize from any edge or corner, including the top. Both panels can sit flush against the browser content edges. Drop the drawer header onto the guesser, or click **Dock back**, to return it.
 
 1. Expand **Auto-Drawer** and select **Colors + outlines**. Upload or drop an image. The small original thumbnail stays near the top; the processed preview appears below.
 2. Choose **Full image / scenery** for a landscape or an image you want to keep in full. Leave **Use main subject** unchecked. No foreground AI runs during processing in this mode.
